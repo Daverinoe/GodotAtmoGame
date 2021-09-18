@@ -1,0 +1,2617 @@
+[gd_scene load_steps=43 format=2]
+
+[ext_resource path="res://FluidShader/divergence.tres" type="Material" id=2]
+[ext_resource path="res://Scripts/fluid.gd" type="Script" id=3]
+[ext_resource path="res://FluidShader/advectVelocity.shader" type="Shader" id=4]
+[ext_resource path="res://FluidShader/addVelocity.shader" type="Shader" id=5]
+[ext_resource path="res://Scripts/GUI.gd" type="Script" id=6]
+[ext_resource path="res://Scripts/Brush.gd" type="Script" id=7]
+[ext_resource path="res://Scripts/ChooseViewport.gd" type="Script" id=8]
+
+[sub_resource type="ViewportTexture" id=1]
+viewport_path = NodePath("fluid/Viewing")
+
+[sub_resource type="ImageTexture" id=2]
+flags = 0
+flags = 0
+size = Vector2( 1, 1 )
+
+[sub_resource type="Shader" id=3]
+code = "shader_type canvas_item;
+
+uniform vec4 color : hint_color;
+uniform vec2 point;
+uniform float radius;
+
+uniform sampler2D obstacleTexture;
+
+float gauss(vec2 p, float r)
+{
+    return exp(-dot(p, p) / r);
+}
+
+
+void fragment()
+{
+    vec3 base = texture(SCREEN_TEXTURE, SCREEN_UV).rgb;
+    vec2 coord = point * SCREEN_PIXEL_SIZE - SCREEN_UV;
+    float splat = gauss(coord / SCREEN_PIXEL_SIZE, radius);
+	if (base.z > 0.0) {
+		COLOR.rgb = base;
+	} else {
+		COLOR = vec4(step(0.1, mix(base.rgb, color.rgb, splat)), 1.0);
+	}
+}"
+
+[sub_resource type="ViewportTexture" id=4]
+viewport_path = NodePath("fluid/Obstacles")
+
+[sub_resource type="ShaderMaterial" id=5]
+resource_local_to_scene = true
+shader = SubResource( 3 )
+shader_param/color = Color( 1, 1, 1, 1 )
+shader_param/point = null
+shader_param/radius = 0.0
+shader_param/obstacleTexture = SubResource( 4 )
+
+[sub_resource type="ImageTexture" id=6]
+flags = 0
+flags = 0
+size = Vector2( 1, 1 )
+
+[sub_resource type="Shader" id=7]
+code = "shader_type canvas_item;
+
+uniform float timestep;
+
+uniform sampler2D u; // Input velocity
+uniform sampler2D x; // Quantity to advect
+uniform sampler2D obstacles; //
+
+
+vec2 bilinearInterpolation(sampler2D tex, vec2 pos, vec2 rdx){
+
+	vec2 p = pos / rdx - 0.5;
+	vec2 fraction = fract(p);
+	vec2 integer = floor(p);
+
+	// Weight the points
+	vec2 p11 = texture(tex, (integer + vec2(0.5, 0.5)) * rdx).xy;
+	vec2 p12 = texture(tex, (integer + vec2(0.5, 1.5)) * rdx).xy;
+	vec2 p21 = texture(tex, (integer + vec2(1.5, 0.5)) * rdx).xy;
+	vec2 p22 = texture(tex, (integer + vec2(1.5, 1.5)) * rdx).xy;
+
+	return mix(mix(p11, p21, fraction.x), mix(p12, p22, fraction.x), fraction.y);
+}
+
+void fragment(){
+
+	vec2 oldPos = UV - timestep * SCREEN_PIXEL_SIZE * (texture(u, UV).xy);
+	vec2 outputVelocity = bilinearInterpolation(x, oldPos, SCREEN_PIXEL_SIZE).xy;
+	
+	// Check for obstacles -> Should be 6 cases. No obstacle surrounding, all obstacle surrounding, and the four directions.
+	float checkPoint = texture(obstacles, UV).b;
+	float checkTop = texture(obstacles, UV + vec2(0.0, 1.0) * SCREEN_PIXEL_SIZE).b;
+	float checkBottom = texture(obstacles, UV - vec2(0.0, 1.0) * SCREEN_PIXEL_SIZE).b;
+	float checkLeft = texture(obstacles, UV - vec2(1.0, 0.0) * SCREEN_PIXEL_SIZE).b;
+	float checkRight = texture(obstacles, UV + vec2(1.0, 0.0) * SCREEN_PIXEL_SIZE).b;
+	
+	// Set boundary conditions on obstacles
+	if ( checkTop > 0.0 && checkBottom > 0.0 && checkLeft > 0.0 && checkRight > 0.0){
+		// If surrounded by obstacles, set velocity to 0.
+		outputVelocity = vec2(0.0);
+		
+	} else if (checkTop > 0.0 || checkBottom > 0.0) {
+		outputVelocity.y *= 0.0;
+				
+	} else if (checkLeft > 0.0 || checkRight > 0.0) {
+		outputVelocity.x *= 0.0;
+		
+	}
+	
+		// Added obstacles to a new viewport texture
+	if (texture(obstacles, UV).b > 0.0){
+		outputVelocity = vec2(0.0);
+		COLOR = vec4(0.0, 0.0, 1.0, 1.0);
+	} else {
+		COLOR = vec4(outputVelocity, 0.0, 1.0);
+	}
+	
+}"
+
+[sub_resource type="ViewportTexture" id=8]
+viewport_path = NodePath("fluid/Obstacles")
+
+[sub_resource type="ViewportTexture" id=9]
+viewport_path = NodePath("fluid/subtractPressureGradient")
+
+[sub_resource type="ViewportTexture" id=10]
+viewport_path = NodePath("fluid/Ink")
+
+[sub_resource type="ShaderMaterial" id=11]
+resource_local_to_scene = true
+shader = SubResource( 7 )
+shader_param/timestep = 2.0
+shader_param/u = SubResource( 9 )
+shader_param/x = SubResource( 10 )
+shader_param/obstacles = SubResource( 8 )
+
+[sub_resource type="Shader" id=12]
+code = "shader_type canvas_item;
+
+const float PI = 3.14159265;
+
+void fragment(){
+	// Earth is approx. 0.005 degrees per km temp difference.
+	float yTempchange = 0.005 / SCREEN_PIXEL_SIZE.y;
+	float xTempchange = 0.005 / SCREEN_PIXEL_SIZE.x;
+	vec4 TempGradient = vec4((sin(UV.y * PI) * yTempchange + cos(UV.x * PI - PI / 2.0 * TIME / 10.0) * xTempchange), 0.0, 0.0, 1.0);
+	
+	COLOR = TempGradient;
+}"
+
+[sub_resource type="ShaderMaterial" id=13]
+shader = SubResource( 12 )
+
+[sub_resource type="ImageTexture" id=14]
+flags = 0
+flags = 0
+size = Vector2( 1, 1 )
+
+[sub_resource type="ViewportTexture" id=15]
+viewport_path = NodePath("fluid/Temperature")
+
+[sub_resource type="ViewportTexture" id=16]
+viewport_path = NodePath("fluid/Obstacles")
+
+[sub_resource type="ViewportTexture" id=17]
+viewport_path = NodePath("fluid/subtractPressureGradient")
+
+[sub_resource type="ViewportTexture" id=18]
+viewport_path = NodePath("fluid/subtractPressureGradient")
+
+[sub_resource type="ShaderMaterial" id=19]
+resource_local_to_scene = true
+shader = ExtResource( 4 )
+shader_param/timestep = 2.0
+shader_param/u = SubResource( 17 )
+shader_param/x = SubResource( 18 )
+shader_param/obstacles = SubResource( 16 )
+shader_param/T = SubResource( 15 )
+
+[sub_resource type="ViewportTexture" id=20]
+viewport_path = NodePath("fluid/Advection(u)")
+
+[sub_resource type="ShaderMaterial" id=21]
+resource_local_to_scene = true
+shader = ExtResource( 5 )
+shader_param/color = Color( 0.947218, 0.276402, 0, 1 )
+shader_param/point = Vector2( 1550.93, -206.235 )
+shader_param/radius = 0.0
+shader_param/tempVelocity = SubResource( 20 )
+
+[sub_resource type="ImageTexture" id=22]
+flags = 0
+flags = 0
+size = Vector2( 1, 1 )
+
+[sub_resource type="Shader" id=23]
+resource_local_to_scene = true
+code = "shader_type canvas_item;
+
+uniform sampler2D divw; // Divergence of intermediate velocity
+
+float samplePressure(vec2 pos, vec2 border, sampler2D p)
+{    
+	// Is there an obstacle?
+	if(texture(divw, pos).z > 0.0){
+		return 0.0;
+	}
+	
+    // Boundary condition: Vanish for at walls.
+    if(pos.x > 1.0 - border.x){
+		return texture(p, pos - border * vec2(1.0, 0.0)).x;
+		
+	} else if (pos.y > 1.0 - border.y){
+		return texture(p, pos - border * vec2(0.0, 1.0)).x;
+		
+	} else if (pos.x < border.x){
+		return texture(p, pos + border * vec2(1.0, 0.0)).x;
+		
+	} else if (pos.y < border.y){
+		return texture(p, pos + border * vec2(0.0, 1.0)).x;
+		
+	}else {
+		return texture(p, pos).x;
+		
+	}
+}
+
+void fragment(){
+
+	float alpha = -1.0;
+	float rbeta = 0.25;
+
+    vec2 border = SCREEN_PIXEL_SIZE;
+
+    float div = texture(divw, UV).x;
+    float x0 = samplePressure(SCREEN_UV - vec2(1, 0) * SCREEN_PIXEL_SIZE, border, SCREEN_TEXTURE);
+    float x1 = samplePressure(SCREEN_UV + vec2(1, 0) * SCREEN_PIXEL_SIZE, border, SCREEN_TEXTURE);
+    float y0 = samplePressure(SCREEN_UV - vec2(0, 1) * SCREEN_PIXEL_SIZE, border, SCREEN_TEXTURE);
+    float y1 = samplePressure(SCREEN_UV + vec2(0, 1) * SCREEN_PIXEL_SIZE, border, SCREEN_TEXTURE);
+
+   	COLOR = vec4(vec2(((x0 + x1 + y0 + y1 + (alpha * div)) * rbeta)), 0.0, 1.0);
+} "
+
+[sub_resource type="ViewportTexture" id=24]
+viewport_path = NodePath("fluid/Divergence(u)")
+
+[sub_resource type="ShaderMaterial" id=25]
+resource_local_to_scene = true
+shader = SubResource( 23 )
+shader_param/divw = SubResource( 24 )
+
+[sub_resource type="ImageTexture" id=26]
+flags = 0
+flags = 0
+size = Vector2( 1, 1 )
+
+[sub_resource type="Shader" id=27]
+code = "shader_type canvas_item;
+
+uniform sampler2D p; // Pressure
+uniform sampler2D w; // Intermediate velocity
+
+void fragment(){
+
+	float x0 = texture(p, UV - vec2(1, 0) * SCREEN_PIXEL_SIZE).x;
+	float x1 = texture(p, UV + vec2(1, 0) * SCREEN_PIXEL_SIZE).x;
+	float y0 = texture(p, UV - vec2(0, 1) * SCREEN_PIXEL_SIZE).x;
+	float y1 = texture(p, UV + vec2(0, 1) * SCREEN_PIXEL_SIZE).x;
+
+	// New velocity
+	vec2 pressureGradient = (vec2(x1, y1) - vec2(x0, y0)) * 0.5;
+	vec2 oldV = texture(w, UV).xy;
+	
+	// Check for obstacles
+	if (texture(w, UV).b > 0.0){
+		COLOR = vec4(0.0, 0.0, 1.0, 1.0);
+	} else {
+		COLOR = vec4((oldV - pressureGradient), 0.0, 1.0);
+	}
+
+}"
+
+[sub_resource type="ViewportTexture" id=28]
+viewport_path = NodePath("fluid/computePressure")
+
+[sub_resource type="ViewportTexture" id=29]
+viewport_path = NodePath("fluid/AddForces(u)")
+
+[sub_resource type="ShaderMaterial" id=30]
+resource_local_to_scene = true
+shader = SubResource( 27 )
+shader_param/p = SubResource( 28 )
+shader_param/w = SubResource( 29 )
+
+[sub_resource type="ImageTexture" id=31]
+flags = 0
+flags = 0
+size = Vector2( 1, 1 )
+
+[sub_resource type="Shader" id=32]
+code = "shader_type canvas_item;
+
+uniform sampler2D velocity;
+uniform sampler2D temperature;
+
+const float PI = 3.14159265;
+
+void fragment(){
+	
+	float average = abs(0.5 - (texture(velocity, UV).r + texture(velocity, UV).g) / 2.0);
+	
+	if (texture(velocity, UV).b > 0.0){
+		COLOR = vec4(vec3(0.5), 1.0);
+	} else {
+		COLOR = vec4(vec3(texture(velocity, UV).rg, average), 1.0);
+	}
+	
+}"
+
+[sub_resource type="ViewportTexture" id=33]
+viewport_path = NodePath("fluid/Temperature")
+
+[sub_resource type="ViewportTexture" id=34]
+viewport_path = NodePath("fluid/subtractPressureGradient")
+
+[sub_resource type="ShaderMaterial" id=35]
+resource_local_to_scene = true
+shader = SubResource( 32 )
+shader_param/velocity = SubResource( 34 )
+shader_param/temperature = SubResource( 33 )
+
+[node name="Canvas" type="CanvasLayer"]
+
+[node name="fluid" type="TextureRect" parent="."]
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 1 )
+expand = true
+script = ExtResource( 3 )
+__meta__ = {
+"_edit_lock_": true,
+"_edit_use_anchors_": false
+}
+radius = 500.0
+
+[node name="Obstacles" type="Viewport" parent="fluid"]
+size = Vector2( 1024, 576 )
+handle_input_locally = false
+render_target_v_flip = true
+render_target_clear_mode = 2
+render_target_update_mode = 3
+
+[node name="Obstacles" type="TextureRect" parent="fluid/Obstacles"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+size_flags_horizontal = 2
+size_flags_vertical = 2
+texture = SubResource( 2 )
+expand = true
+
+[node name="BackBufferCopy" type="BackBufferCopy" parent="fluid/Obstacles"]
+copy_mode = 2
+
+[node name="addObstacles" type="TextureRect" parent="fluid/Obstacles"]
+material = SubResource( 5 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 6 )
+expand = true
+
+[node name="Ink" type="Viewport" parent="fluid"]
+size = Vector2( 1024, 576 )
+handle_input_locally = false
+render_target_v_flip = true
+render_target_clear_mode = 2
+render_target_update_mode = 3
+
+[node name="ink" type="TextureRect" parent="fluid/Ink"]
+material = SubResource( 11 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+size_flags_horizontal = 2
+size_flags_vertical = 2
+texture = SubResource( 2 )
+expand = true
+
+[node name="Temperature" type="Viewport" parent="fluid"]
+size = Vector2( 1024, 576 )
+handle_input_locally = false
+render_target_v_flip = true
+render_target_clear_mode = 2
+render_target_update_mode = 3
+
+[node name="temperature" type="TextureRect" parent="fluid/Temperature"]
+material = SubResource( 13 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 14 )
+expand = true
+
+[node name="Advection(u)" type="Viewport" parent="fluid"]
+size = Vector2( 1024, 576 )
+handle_input_locally = false
+render_target_v_flip = true
+render_target_clear_mode = 2
+render_target_update_mode = 3
+
+[node name="velocity" type="TextureRect" parent="fluid/Advection(u)"]
+material = SubResource( 19 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 14 )
+expand = true
+
+[node name="Diffusion(u)" type="Viewport" parent="fluid"]
+size = Vector2( 1024, 576 )
+handle_input_locally = false
+render_target_v_flip = true
+render_target_clear_mode = 2
+render_target_update_mode = 3
+
+[node name="AddForces(u)" type="Viewport" parent="fluid"]
+size = Vector2( 1024, 576 )
+handle_input_locally = false
+render_target_v_flip = true
+render_target_clear_mode = 2
+render_target_update_mode = 3
+
+[node name="velocitySplat" type="TextureRect" parent="fluid/AddForces(u)"]
+material = SubResource( 21 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 6 )
+expand = true
+
+[node name="Divergence(u)" type="Viewport" parent="fluid"]
+size = Vector2( 1024, 576 )
+handle_input_locally = false
+render_target_v_flip = true
+render_target_clear_mode = 2
+render_target_update_mode = 3
+
+[node name="divergence" type="TextureRect" parent="fluid/Divergence(u)"]
+material = ExtResource( 2 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 22 )
+expand = true
+
+[node name="computePressure" type="Viewport" parent="fluid"]
+size = Vector2( 1024, 576 )
+handle_input_locally = false
+render_target_v_flip = true
+render_target_clear_mode = 2
+render_target_update_mode = 3
+
+[node name="10JacobiIterants" type="Control" parent="fluid/computePressure"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+
+[node name="JacobiIterant" type="Control" parent="fluid/computePressure/10JacobiIterants"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants/JacobiIterant"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants/JacobiIterant"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant2" type="Control" parent="fluid/computePressure/10JacobiIterants"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants/JacobiIterant2"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants/JacobiIterant2"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant3" type="Control" parent="fluid/computePressure/10JacobiIterants"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants/JacobiIterant3"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants/JacobiIterant3"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant4" type="Control" parent="fluid/computePressure/10JacobiIterants"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants/JacobiIterant4"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants/JacobiIterant4"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant5" type="Control" parent="fluid/computePressure/10JacobiIterants"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants/JacobiIterant5"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants/JacobiIterant5"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant6" type="Control" parent="fluid/computePressure/10JacobiIterants"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants/JacobiIterant6"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants/JacobiIterant6"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant7" type="Control" parent="fluid/computePressure/10JacobiIterants"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants/JacobiIterant7"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants/JacobiIterant7"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant8" type="Control" parent="fluid/computePressure/10JacobiIterants"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants/JacobiIterant8"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants/JacobiIterant8"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant9" type="Control" parent="fluid/computePressure/10JacobiIterants"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants/JacobiIterant9"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants/JacobiIterant9"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant10" type="Control" parent="fluid/computePressure/10JacobiIterants"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants/JacobiIterant10"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants/JacobiIterant10"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="10JacobiIterants2" type="Control" parent="fluid/computePressure"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+
+[node name="JacobiIterant" type="Control" parent="fluid/computePressure/10JacobiIterants2"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants2/JacobiIterant"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants2/JacobiIterant"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant2" type="Control" parent="fluid/computePressure/10JacobiIterants2"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants2/JacobiIterant2"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants2/JacobiIterant2"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant3" type="Control" parent="fluid/computePressure/10JacobiIterants2"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants2/JacobiIterant3"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants2/JacobiIterant3"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant4" type="Control" parent="fluid/computePressure/10JacobiIterants2"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants2/JacobiIterant4"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants2/JacobiIterant4"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant5" type="Control" parent="fluid/computePressure/10JacobiIterants2"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants2/JacobiIterant5"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants2/JacobiIterant5"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant6" type="Control" parent="fluid/computePressure/10JacobiIterants2"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants2/JacobiIterant6"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants2/JacobiIterant6"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant7" type="Control" parent="fluid/computePressure/10JacobiIterants2"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants2/JacobiIterant7"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants2/JacobiIterant7"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant8" type="Control" parent="fluid/computePressure/10JacobiIterants2"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants2/JacobiIterant8"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants2/JacobiIterant8"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant9" type="Control" parent="fluid/computePressure/10JacobiIterants2"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants2/JacobiIterant9"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants2/JacobiIterant9"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant10" type="Control" parent="fluid/computePressure/10JacobiIterants2"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants2/JacobiIterant10"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants2/JacobiIterant10"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="10JacobiIterants3" type="Control" parent="fluid/computePressure"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+
+[node name="JacobiIterant" type="Control" parent="fluid/computePressure/10JacobiIterants3"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants3/JacobiIterant"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants3/JacobiIterant"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant2" type="Control" parent="fluid/computePressure/10JacobiIterants3"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants3/JacobiIterant2"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants3/JacobiIterant2"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant3" type="Control" parent="fluid/computePressure/10JacobiIterants3"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants3/JacobiIterant3"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants3/JacobiIterant3"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant4" type="Control" parent="fluid/computePressure/10JacobiIterants3"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants3/JacobiIterant4"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants3/JacobiIterant4"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant5" type="Control" parent="fluid/computePressure/10JacobiIterants3"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants3/JacobiIterant5"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants3/JacobiIterant5"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant6" type="Control" parent="fluid/computePressure/10JacobiIterants3"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants3/JacobiIterant6"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants3/JacobiIterant6"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant7" type="Control" parent="fluid/computePressure/10JacobiIterants3"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants3/JacobiIterant7"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants3/JacobiIterant7"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant8" type="Control" parent="fluid/computePressure/10JacobiIterants3"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants3/JacobiIterant8"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants3/JacobiIterant8"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant9" type="Control" parent="fluid/computePressure/10JacobiIterants3"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants3/JacobiIterant9"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants3/JacobiIterant9"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant10" type="Control" parent="fluid/computePressure/10JacobiIterants3"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants3/JacobiIterant10"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants3/JacobiIterant10"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="10JacobiIterants4" type="Control" parent="fluid/computePressure"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+
+[node name="JacobiIterant" type="Control" parent="fluid/computePressure/10JacobiIterants4"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants4/JacobiIterant"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants4/JacobiIterant"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant2" type="Control" parent="fluid/computePressure/10JacobiIterants4"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants4/JacobiIterant2"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants4/JacobiIterant2"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant3" type="Control" parent="fluid/computePressure/10JacobiIterants4"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants4/JacobiIterant3"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants4/JacobiIterant3"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant4" type="Control" parent="fluid/computePressure/10JacobiIterants4"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants4/JacobiIterant4"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants4/JacobiIterant4"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant5" type="Control" parent="fluid/computePressure/10JacobiIterants4"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants4/JacobiIterant5"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants4/JacobiIterant5"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant6" type="Control" parent="fluid/computePressure/10JacobiIterants4"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants4/JacobiIterant6"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants4/JacobiIterant6"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant7" type="Control" parent="fluid/computePressure/10JacobiIterants4"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants4/JacobiIterant7"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants4/JacobiIterant7"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant8" type="Control" parent="fluid/computePressure/10JacobiIterants4"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants4/JacobiIterant8"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants4/JacobiIterant8"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant9" type="Control" parent="fluid/computePressure/10JacobiIterants4"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants4/JacobiIterant9"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants4/JacobiIterant9"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant10" type="Control" parent="fluid/computePressure/10JacobiIterants4"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants4/JacobiIterant10"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants4/JacobiIterant10"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="10JacobiIterants5" type="Control" parent="fluid/computePressure"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+
+[node name="JacobiIterant" type="Control" parent="fluid/computePressure/10JacobiIterants5"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants5/JacobiIterant"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants5/JacobiIterant"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant2" type="Control" parent="fluid/computePressure/10JacobiIterants5"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants5/JacobiIterant2"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants5/JacobiIterant2"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant3" type="Control" parent="fluid/computePressure/10JacobiIterants5"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants5/JacobiIterant3"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants5/JacobiIterant3"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant4" type="Control" parent="fluid/computePressure/10JacobiIterants5"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants5/JacobiIterant4"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants5/JacobiIterant4"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant5" type="Control" parent="fluid/computePressure/10JacobiIterants5"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants5/JacobiIterant5"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants5/JacobiIterant5"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant6" type="Control" parent="fluid/computePressure/10JacobiIterants5"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants5/JacobiIterant6"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants5/JacobiIterant6"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant7" type="Control" parent="fluid/computePressure/10JacobiIterants5"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants5/JacobiIterant7"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants5/JacobiIterant7"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant8" type="Control" parent="fluid/computePressure/10JacobiIterants5"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants5/JacobiIterant8"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants5/JacobiIterant8"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant9" type="Control" parent="fluid/computePressure/10JacobiIterants5"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants5/JacobiIterant9"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants5/JacobiIterant9"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant10" type="Control" parent="fluid/computePressure/10JacobiIterants5"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants5/JacobiIterant10"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants5/JacobiIterant10"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="10JacobiIterants6" type="Control" parent="fluid/computePressure"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+
+[node name="JacobiIterant" type="Control" parent="fluid/computePressure/10JacobiIterants6"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants6/JacobiIterant"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants6/JacobiIterant"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant2" type="Control" parent="fluid/computePressure/10JacobiIterants6"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants6/JacobiIterant2"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants6/JacobiIterant2"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant3" type="Control" parent="fluid/computePressure/10JacobiIterants6"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants6/JacobiIterant3"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants6/JacobiIterant3"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant4" type="Control" parent="fluid/computePressure/10JacobiIterants6"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants6/JacobiIterant4"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants6/JacobiIterant4"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant5" type="Control" parent="fluid/computePressure/10JacobiIterants6"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants6/JacobiIterant5"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants6/JacobiIterant5"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant6" type="Control" parent="fluid/computePressure/10JacobiIterants6"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants6/JacobiIterant6"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants6/JacobiIterant6"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant7" type="Control" parent="fluid/computePressure/10JacobiIterants6"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants6/JacobiIterant7"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants6/JacobiIterant7"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant8" type="Control" parent="fluid/computePressure/10JacobiIterants6"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants6/JacobiIterant8"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants6/JacobiIterant8"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant9" type="Control" parent="fluid/computePressure/10JacobiIterants6"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants6/JacobiIterant9"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants6/JacobiIterant9"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant10" type="Control" parent="fluid/computePressure/10JacobiIterants6"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants6/JacobiIterant10"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants6/JacobiIterant10"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="10JacobiIterants7" type="Control" parent="fluid/computePressure"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+
+[node name="JacobiIterant" type="Control" parent="fluid/computePressure/10JacobiIterants7"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants7/JacobiIterant"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants7/JacobiIterant"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant2" type="Control" parent="fluid/computePressure/10JacobiIterants7"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants7/JacobiIterant2"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants7/JacobiIterant2"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant3" type="Control" parent="fluid/computePressure/10JacobiIterants7"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants7/JacobiIterant3"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants7/JacobiIterant3"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant4" type="Control" parent="fluid/computePressure/10JacobiIterants7"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants7/JacobiIterant4"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants7/JacobiIterant4"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant5" type="Control" parent="fluid/computePressure/10JacobiIterants7"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants7/JacobiIterant5"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants7/JacobiIterant5"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant6" type="Control" parent="fluid/computePressure/10JacobiIterants7"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants7/JacobiIterant6"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants7/JacobiIterant6"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant7" type="Control" parent="fluid/computePressure/10JacobiIterants7"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants7/JacobiIterant7"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants7/JacobiIterant7"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant8" type="Control" parent="fluid/computePressure/10JacobiIterants7"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants7/JacobiIterant8"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants7/JacobiIterant8"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant9" type="Control" parent="fluid/computePressure/10JacobiIterants7"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants7/JacobiIterant9"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants7/JacobiIterant9"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant10" type="Control" parent="fluid/computePressure/10JacobiIterants7"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants7/JacobiIterant10"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants7/JacobiIterant10"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="10JacobiIterants8" type="Control" parent="fluid/computePressure"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+
+[node name="JacobiIterant" type="Control" parent="fluid/computePressure/10JacobiIterants8"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants8/JacobiIterant"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants8/JacobiIterant"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant2" type="Control" parent="fluid/computePressure/10JacobiIterants8"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants8/JacobiIterant2"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants8/JacobiIterant2"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant3" type="Control" parent="fluid/computePressure/10JacobiIterants8"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants8/JacobiIterant3"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants8/JacobiIterant3"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant4" type="Control" parent="fluid/computePressure/10JacobiIterants8"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants8/JacobiIterant4"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants8/JacobiIterant4"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant5" type="Control" parent="fluid/computePressure/10JacobiIterants8"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants8/JacobiIterant5"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants8/JacobiIterant5"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant6" type="Control" parent="fluid/computePressure/10JacobiIterants8"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants8/JacobiIterant6"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants8/JacobiIterant6"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant7" type="Control" parent="fluid/computePressure/10JacobiIterants8"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants8/JacobiIterant7"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants8/JacobiIterant7"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant8" type="Control" parent="fluid/computePressure/10JacobiIterants8"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants8/JacobiIterant8"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants8/JacobiIterant8"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant9" type="Control" parent="fluid/computePressure/10JacobiIterants8"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants8/JacobiIterant9"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants8/JacobiIterant9"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant10" type="Control" parent="fluid/computePressure/10JacobiIterants8"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants8/JacobiIterant10"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants8/JacobiIterant10"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="10JacobiIterants9" type="Control" parent="fluid/computePressure"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+
+[node name="JacobiIterant" type="Control" parent="fluid/computePressure/10JacobiIterants9"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants9/JacobiIterant"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants9/JacobiIterant"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant2" type="Control" parent="fluid/computePressure/10JacobiIterants9"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants9/JacobiIterant2"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants9/JacobiIterant2"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant3" type="Control" parent="fluid/computePressure/10JacobiIterants9"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants9/JacobiIterant3"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants9/JacobiIterant3"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant4" type="Control" parent="fluid/computePressure/10JacobiIterants9"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants9/JacobiIterant4"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants9/JacobiIterant4"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant5" type="Control" parent="fluid/computePressure/10JacobiIterants9"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants9/JacobiIterant5"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants9/JacobiIterant5"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant6" type="Control" parent="fluid/computePressure/10JacobiIterants9"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants9/JacobiIterant6"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants9/JacobiIterant6"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant7" type="Control" parent="fluid/computePressure/10JacobiIterants9"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants9/JacobiIterant7"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants9/JacobiIterant7"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant8" type="Control" parent="fluid/computePressure/10JacobiIterants9"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants9/JacobiIterant8"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants9/JacobiIterant8"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant9" type="Control" parent="fluid/computePressure/10JacobiIterants9"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants9/JacobiIterant9"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants9/JacobiIterant9"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant10" type="Control" parent="fluid/computePressure/10JacobiIterants9"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants9/JacobiIterant10"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants9/JacobiIterant10"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="10JacobiIterants10" type="Control" parent="fluid/computePressure"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+
+[node name="JacobiIterant" type="Control" parent="fluid/computePressure/10JacobiIterants10"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants10/JacobiIterant"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants10/JacobiIterant"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant2" type="Control" parent="fluid/computePressure/10JacobiIterants10"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants10/JacobiIterant2"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants10/JacobiIterant2"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant3" type="Control" parent="fluid/computePressure/10JacobiIterants10"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants10/JacobiIterant3"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants10/JacobiIterant3"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant4" type="Control" parent="fluid/computePressure/10JacobiIterants10"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants10/JacobiIterant4"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants10/JacobiIterant4"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant5" type="Control" parent="fluid/computePressure/10JacobiIterants10"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants10/JacobiIterant5"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants10/JacobiIterant5"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant6" type="Control" parent="fluid/computePressure/10JacobiIterants10"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants10/JacobiIterant6"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants10/JacobiIterant6"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant7" type="Control" parent="fluid/computePressure/10JacobiIterants10"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants10/JacobiIterant7"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants10/JacobiIterant7"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant8" type="Control" parent="fluid/computePressure/10JacobiIterants10"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants10/JacobiIterant8"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants10/JacobiIterant8"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant9" type="Control" parent="fluid/computePressure/10JacobiIterants10"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants10/JacobiIterant9"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants10/JacobiIterant9"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant10" type="Control" parent="fluid/computePressure/10JacobiIterants10"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants10/JacobiIterant10"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants10/JacobiIterant10"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="10JacobiIterants11" type="Control" parent="fluid/computePressure"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+
+[node name="JacobiIterant" type="Control" parent="fluid/computePressure/10JacobiIterants11"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants11/JacobiIterant"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants11/JacobiIterant"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant2" type="Control" parent="fluid/computePressure/10JacobiIterants11"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants11/JacobiIterant2"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants11/JacobiIterant2"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant3" type="Control" parent="fluid/computePressure/10JacobiIterants11"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants11/JacobiIterant3"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants11/JacobiIterant3"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant4" type="Control" parent="fluid/computePressure/10JacobiIterants11"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants11/JacobiIterant4"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants11/JacobiIterant4"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant5" type="Control" parent="fluid/computePressure/10JacobiIterants11"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants11/JacobiIterant5"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants11/JacobiIterant5"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant6" type="Control" parent="fluid/computePressure/10JacobiIterants11"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants11/JacobiIterant6"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants11/JacobiIterant6"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant7" type="Control" parent="fluid/computePressure/10JacobiIterants11"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants11/JacobiIterant7"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants11/JacobiIterant7"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant8" type="Control" parent="fluid/computePressure/10JacobiIterants11"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants11/JacobiIterant8"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants11/JacobiIterant8"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant9" type="Control" parent="fluid/computePressure/10JacobiIterants11"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants11/JacobiIterant9"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants11/JacobiIterant9"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant10" type="Control" parent="fluid/computePressure/10JacobiIterants11"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants11/JacobiIterant10"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants11/JacobiIterant10"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="10JacobiIterants12" type="Control" parent="fluid/computePressure"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+
+[node name="JacobiIterant" type="Control" parent="fluid/computePressure/10JacobiIterants12"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants12/JacobiIterant"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants12/JacobiIterant"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant2" type="Control" parent="fluid/computePressure/10JacobiIterants12"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants12/JacobiIterant2"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants12/JacobiIterant2"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant3" type="Control" parent="fluid/computePressure/10JacobiIterants12"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants12/JacobiIterant3"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants12/JacobiIterant3"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant4" type="Control" parent="fluid/computePressure/10JacobiIterants12"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants12/JacobiIterant4"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants12/JacobiIterant4"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant5" type="Control" parent="fluid/computePressure/10JacobiIterants12"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants12/JacobiIterant5"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants12/JacobiIterant5"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant6" type="Control" parent="fluid/computePressure/10JacobiIterants12"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants12/JacobiIterant6"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants12/JacobiIterant6"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant7" type="Control" parent="fluid/computePressure/10JacobiIterants12"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants12/JacobiIterant7"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants12/JacobiIterant7"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant8" type="Control" parent="fluid/computePressure/10JacobiIterants12"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants12/JacobiIterant8"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants12/JacobiIterant8"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant9" type="Control" parent="fluid/computePressure/10JacobiIterants12"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants12/JacobiIterant9"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants12/JacobiIterant9"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="JacobiIterant10" type="Control" parent="fluid/computePressure/10JacobiIterants12"]
+anchor_right = 1.0
+anchor_bottom = 1.0
+mouse_filter = 1
+size_flags_horizontal = 2
+size_flags_vertical = 2
+
+[node name="TextureBuffer" type="BackBufferCopy" parent="fluid/computePressure/10JacobiIterants12/JacobiIterant10"]
+copy_mode = 2
+
+[node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants12/JacobiIterant10"]
+material = SubResource( 25 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 26 )
+expand = true
+
+[node name="subtractPressureGradient" type="Viewport" parent="fluid"]
+size = Vector2( 1024, 576 )
+handle_input_locally = false
+render_target_v_flip = true
+render_target_clear_mode = 2
+render_target_update_mode = 3
+
+[node name="subtractPressureGradient" type="TextureRect" parent="fluid/subtractPressureGradient"]
+material = SubResource( 30 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 31 )
+expand = true
+
+[node name="Viewing" type="Viewport" parent="fluid"]
+size = Vector2( 1024, 576 )
+handle_input_locally = false
+render_target_v_flip = true
+render_target_clear_mode = 2
+render_target_update_mode = 3
+
+[node name="Viewing" type="TextureRect" parent="fluid/Viewing"]
+material = SubResource( 35 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 31 )
+expand = true
+
+[node name="GUI" type="Control" parent="."]
+anchor_right = 1.0
+anchor_bottom = 1.0
+script = ExtResource( 6 )
+__meta__ = {
+"_edit_lock_": true,
+"_edit_use_anchors_": false
+}
+
+[node name="VBoxContainer" type="HBoxContainer" parent="GUI"]
+__meta__ = {
+"_edit_use_anchors_": false
+}
+
+[node name="ChooseViewport" type="MenuButton" parent="GUI/VBoxContainer"]
+margin_right = 68.0
+margin_bottom = 20.0
+text = "Viewport"
+items = [ "Obstacles", null, 0, false, false, 0, 0, null, "", false, "Ink", null, 0, false, false, 1, 0, null, "", false, "Temperature", null, 0, false, false, 2, 0, null, "", false, "Velocity", null, 0, false, false, 3, 0, null, "", false, "Divergence", null, 0, false, false, 4, 0, null, "", false, "Pressure", null, 0, false, false, 5, 0, null, "", false ]
+switch_on_hover = true
+script = ExtResource( 8 )
+
+[node name="Brush" type="MenuButton" parent="GUI/VBoxContainer"]
+margin_left = 72.0
+margin_right = 163.0
+margin_bottom = 20.0
+focus_mode = 2
+text = "Add velocity"
+items = [ "Obstacles", null, 0, false, false, 0, 0, null, "", false, "Velocity", null, 0, false, false, 1, 0, null, "", false, "Ink", null, 0, false, false, 2, 0, null, "", false ]
+switch_on_hover = true
+script = ExtResource( 7 )
