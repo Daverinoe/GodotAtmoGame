@@ -1,4 +1,4 @@
-[gd_scene load_steps=43 format=2]
+[gd_scene load_steps=48 format=2]
 
 [ext_resource path="res://FluidShader/divergence.tres" type="Material" id=2]
 [ext_resource path="res://Scripts/fluid.gd" type="Script" id=3]
@@ -23,8 +23,6 @@ uniform vec4 color : hint_color;
 uniform vec2 point;
 uniform float radius;
 
-uniform sampler2D obstacleTexture;
-
 float gauss(vec2 p, float r)
 {
     return exp(-dot(p, p) / r);
@@ -43,16 +41,12 @@ void fragment()
 	}
 }"
 
-[sub_resource type="ViewportTexture" id=4]
-viewport_path = NodePath("fluid/Obstacles")
-
 [sub_resource type="ShaderMaterial" id=5]
 resource_local_to_scene = true
 shader = SubResource( 3 )
 shader_param/color = Color( 1, 1, 1, 1 )
 shader_param/point = null
 shader_param/radius = 0.0
-shader_param/obstacleTexture = SubResource( 4 )
 
 [sub_resource type="ImageTexture" id=6]
 flags = 0
@@ -95,17 +89,47 @@ void fragment(){
 	float checkBottom = texture(obstacles, UV - vec2(0.0, 1.0) * SCREEN_PIXEL_SIZE).b;
 	float checkLeft = texture(obstacles, UV - vec2(1.0, 0.0) * SCREEN_PIXEL_SIZE).b;
 	float checkRight = texture(obstacles, UV + vec2(1.0, 0.0) * SCREEN_PIXEL_SIZE).b;
-	
+
 	// Set boundary conditions on obstacles
 	if ( checkTop > 0.0 && checkBottom > 0.0 && checkLeft > 0.0 && checkRight > 0.0){
 		// If surrounded by obstacles, set velocity to 0.
 		outputVelocity = vec2(0.0);
-		
+
 	} else if (checkTop > 0.0 || checkBottom > 0.0) {
-		outputVelocity.y *= 0.0;
-				
+		outputVelocity.y *= -1.0;
+
 	} else if (checkLeft > 0.0 || checkRight > 0.0) {
-		outputVelocity.x *= 0.0;
+		outputVelocity.x *= -1.0;
+
+	}
+
+	// Apply boundary conditions
+	if(UV.x > 1.0 - SCREEN_PIXEL_SIZE.x){
+		outputVelocity.x = -texture(u, UV - vec2(1.0, 0.0) * SCREEN_PIXEL_SIZE).x;
+
+	} else if (UV.y > 1.0 - SCREEN_PIXEL_SIZE.y) {
+		outputVelocity.y = -texture(u, UV - vec2(0.0, 1.0) * SCREEN_PIXEL_SIZE).y;
+
+	} else if (UV.x < SCREEN_PIXEL_SIZE.x) {
+		outputVelocity.x = -texture(u, UV + vec2(1.0, 0.0) * SCREEN_PIXEL_SIZE).x;
+
+	} else if (UV.y < SCREEN_PIXEL_SIZE.y) {
+		outputVelocity.y = -texture(u, UV + vec2(0.0, 1.0) * SCREEN_PIXEL_SIZE).y;
+
+	}
+	
+	// Do the corners
+	if (UV.x > 1.0 - SCREEN_PIXEL_SIZE.x && UV.y > 1.0 - SCREEN_PIXEL_SIZE.y){
+		outputVelocity = vec2(0.0);
+		
+	} else if (UV.x < SCREEN_PIXEL_SIZE.x && UV.y > 1.0 - SCREEN_PIXEL_SIZE.y){
+		outputVelocity = vec2(0.0);
+		
+	} else if (UV.x > 1.0 - SCREEN_PIXEL_SIZE.x && UV.y < SCREEN_PIXEL_SIZE.y){
+		outputVelocity = vec2(0.0);
+		
+	} else if (UV.x < SCREEN_PIXEL_SIZE.x && UV.y < SCREEN_PIXEL_SIZE.y){
+		outputVelocity = vec2(0.0);
 		
 	}
 	
@@ -131,10 +155,43 @@ viewport_path = NodePath("fluid/Ink")
 [sub_resource type="ShaderMaterial" id=11]
 resource_local_to_scene = true
 shader = SubResource( 7 )
-shader_param/timestep = 2.0
+shader_param/timestep = 0.583333
 shader_param/u = SubResource( 9 )
 shader_param/x = SubResource( 10 )
 shader_param/obstacles = SubResource( 8 )
+
+[sub_resource type="Shader" id=40]
+code = "shader_type canvas_item;
+
+uniform vec4 color : hint_color;
+uniform vec2 point;
+uniform float radius;
+
+float gauss(vec2 p, float r)
+{
+    return exp(-dot(p, p) / r);
+}
+
+
+void fragment()
+{
+    vec3 base = texture(SCREEN_TEXTURE, UV).rgb;
+    vec2 coord = point * SCREEN_PIXEL_SIZE - SCREEN_UV;
+    float splat = gauss(coord / SCREEN_PIXEL_SIZE, radius);
+	if (base.z > 0.0) {
+		COLOR.rgb = base;
+	} else {
+		COLOR = vec4(mix(base.rg, color.rg, splat), 0.0, 1.0);
+	}
+    
+}"
+
+[sub_resource type="ShaderMaterial" id=41]
+resource_local_to_scene = true
+shader = SubResource( 40 )
+shader_param/color = Color( 1, 1, 1, 1 )
+shader_param/point = null
+shader_param/radius = null
 
 [sub_resource type="Shader" id=12]
 code = "shader_type canvas_item;
@@ -173,7 +230,7 @@ viewport_path = NodePath("fluid/subtractPressureGradient")
 [sub_resource type="ShaderMaterial" id=19]
 resource_local_to_scene = true
 shader = ExtResource( 4 )
-shader_param/timestep = 2.0
+shader_param/timestep = 0.583333
 shader_param/u = SubResource( 17 )
 shader_param/x = SubResource( 18 )
 shader_param/obstacles = SubResource( 16 )
@@ -185,7 +242,7 @@ viewport_path = NodePath("fluid/Advection(u)")
 [sub_resource type="ShaderMaterial" id=21]
 resource_local_to_scene = true
 shader = ExtResource( 5 )
-shader_param/color = Color( 0.947218, 0.276402, 0, 1 )
+shader_param/color = Color( 1, 1, 1, 1 )
 shader_param/point = Vector2( 1550.93, -206.235 )
 shader_param/radius = 0.0
 shader_param/tempVelocity = SubResource( 20 )
@@ -209,16 +266,22 @@ float samplePressure(vec2 pos, vec2 border, sampler2D p)
 	}
 	
     // Boundary condition: Vanish for at walls.
-    if(pos.x > 1.0 - border.x){
-		return texture(p, pos - border * vec2(1.0, 0.0)).x;
+//    if(pos.x > 1.0 - border.x){
+//		return texture(p, pos - border * vec2(1.0, 0.0)).x;
+//
+//	} else if (pos.x < border.x){
+//		return texture(p, pos + border * vec2(1.0, 0.0)).x;
+
+	if(pos.x > 1.0 - border.x){ // Right border
+		return texture(p, border * vec2(1.0, 0.0)).x;
+	
+	} else if (pos.x < border.x){ // Left border
+		return texture(p, (1.0 / pos.x) * vec2(1.0, 0.0)).x;
 		
 	} else if (pos.y > 1.0 - border.y){
 		return texture(p, pos - border * vec2(0.0, 1.0)).x;
 		
-	} else if (pos.x < border.x){
-		return texture(p, pos + border * vec2(1.0, 0.0)).x;
-		
-	} else if (pos.y < border.y){
+	}  else if (pos.y < border.y){
 		return texture(p, pos + border * vec2(0.0, 1.0)).x;
 		
 	}else {
@@ -302,22 +365,54 @@ size = Vector2( 1, 1 )
 [sub_resource type="Shader" id=32]
 code = "shader_type canvas_item;
 
-uniform sampler2D velocity;
-uniform sampler2D temperature;
+uniform sampler2D velocity; // == 0
+uniform sampler2D temperature; // == 1
+uniform sampler2D obstacles; // == 2
+uniform sampler2D divergence; // == 3
+uniform sampler2D pressure; // == 4
+uniform sampler2D ink; // == 5
 
-const float PI = 3.14159265;
+uniform int viewport = 0;
 
 void fragment(){
 	
-	float average = abs(0.5 - (texture(velocity, UV).r + texture(velocity, UV).g) / 2.0);
+	if (viewport == 0) {
+		float average = abs(0.5 - (texture(velocity, UV).r + texture(velocity, UV).g) / 2.0);
 	
-	if (texture(velocity, UV).b > 0.0){
-		COLOR = vec4(vec3(0.5), 1.0);
-	} else {
-		COLOR = vec4(vec3(texture(velocity, UV).rg, average), 1.0);
+		if (texture(velocity, UV).b > 0.0){
+			COLOR = vec4(vec3(0.5), 1.0);
+		} else {
+			COLOR = vec4(vec3(texture(velocity, UV).rg, average), 1.0);
+		}
 	}
-	
+	else if (viewport == 1){
+		COLOR = vec4(texture(temperature, UV));
+	}
+	else if (viewport == 2){
+		COLOR = vec4(texture(obstacles, UV));
+	}
+	else if (viewport == 3){
+		COLOR = vec4(texture(divergence, UV));
+	}
+	else if (viewport == 4){
+		COLOR = vec4(texture(pressure, UV));
+	}
+	else if (viewport == 5){
+		COLOR = vec4(texture(ink, UV));
+	}
 }"
+
+[sub_resource type="ViewportTexture" id=36]
+viewport_path = NodePath("fluid/Divergence(u)")
+
+[sub_resource type="ViewportTexture" id=39]
+viewport_path = NodePath("fluid/Ink")
+
+[sub_resource type="ViewportTexture" id=37]
+viewport_path = NodePath("fluid/Obstacles")
+
+[sub_resource type="ViewportTexture" id=38]
+viewport_path = NodePath("fluid/computePressure")
 
 [sub_resource type="ViewportTexture" id=33]
 viewport_path = NodePath("fluid/Temperature")
@@ -328,8 +423,13 @@ viewport_path = NodePath("fluid/subtractPressureGradient")
 [sub_resource type="ShaderMaterial" id=35]
 resource_local_to_scene = true
 shader = SubResource( 32 )
+shader_param/viewport = 0
 shader_param/velocity = SubResource( 34 )
 shader_param/temperature = SubResource( 33 )
+shader_param/obstacles = SubResource( 37 )
+shader_param/divergence = SubResource( 36 )
+shader_param/pressure = SubResource( 38 )
+shader_param/ink = SubResource( 39 )
 
 [node name="Canvas" type="CanvasLayer"]
 
@@ -346,7 +446,7 @@ __meta__ = {
 radius = 500.0
 
 [node name="Obstacles" type="Viewport" parent="fluid"]
-size = Vector2( 1024, 576 )
+size = Vector2( 1024, 600 )
 handle_input_locally = false
 render_target_v_flip = true
 render_target_clear_mode = 2
@@ -360,7 +460,7 @@ size_flags_vertical = 2
 texture = SubResource( 2 )
 expand = true
 
-[node name="BackBufferCopy" type="BackBufferCopy" parent="fluid/Obstacles"]
+[node name="buffer" type="BackBufferCopy" parent="fluid/Obstacles"]
 copy_mode = 2
 
 [node name="addObstacles" type="TextureRect" parent="fluid/Obstacles"]
@@ -371,7 +471,7 @@ texture = SubResource( 6 )
 expand = true
 
 [node name="Ink" type="Viewport" parent="fluid"]
-size = Vector2( 1024, 576 )
+size = Vector2( 1024, 600 )
 handle_input_locally = false
 render_target_v_flip = true
 render_target_clear_mode = 2
@@ -386,8 +486,18 @@ size_flags_vertical = 2
 texture = SubResource( 2 )
 expand = true
 
+[node name="buffer" type="BackBufferCopy" parent="fluid/Ink"]
+copy_mode = 2
+
+[node name="addInk" type="TextureRect" parent="fluid/Ink"]
+material = SubResource( 41 )
+anchor_right = 1.0
+anchor_bottom = 1.0
+texture = SubResource( 6 )
+expand = true
+
 [node name="Temperature" type="Viewport" parent="fluid"]
-size = Vector2( 1024, 576 )
+size = Vector2( 1024, 600 )
 handle_input_locally = false
 render_target_v_flip = true
 render_target_clear_mode = 2
@@ -401,7 +511,7 @@ texture = SubResource( 14 )
 expand = true
 
 [node name="Advection(u)" type="Viewport" parent="fluid"]
-size = Vector2( 1024, 576 )
+size = Vector2( 1024, 600 )
 handle_input_locally = false
 render_target_v_flip = true
 render_target_clear_mode = 2
@@ -415,14 +525,14 @@ texture = SubResource( 14 )
 expand = true
 
 [node name="Diffusion(u)" type="Viewport" parent="fluid"]
-size = Vector2( 1024, 576 )
+size = Vector2( 1024, 600 )
 handle_input_locally = false
 render_target_v_flip = true
 render_target_clear_mode = 2
 render_target_update_mode = 3
 
 [node name="AddForces(u)" type="Viewport" parent="fluid"]
-size = Vector2( 1024, 576 )
+size = Vector2( 1024, 600 )
 handle_input_locally = false
 render_target_v_flip = true
 render_target_clear_mode = 2
@@ -436,7 +546,7 @@ texture = SubResource( 6 )
 expand = true
 
 [node name="Divergence(u)" type="Viewport" parent="fluid"]
-size = Vector2( 1024, 576 )
+size = Vector2( 1024, 600 )
 handle_input_locally = false
 render_target_v_flip = true
 render_target_clear_mode = 2
@@ -450,7 +560,7 @@ texture = SubResource( 22 )
 expand = true
 
 [node name="computePressure" type="Viewport" parent="fluid"]
-size = Vector2( 1024, 576 )
+size = Vector2( 1024, 600 )
 handle_input_locally = false
 render_target_v_flip = true
 render_target_clear_mode = 2
@@ -1332,6 +1442,7 @@ texture = SubResource( 26 )
 expand = true
 
 [node name="10JacobiIterants6" type="Control" parent="fluid/computePressure"]
+visible = false
 anchor_right = 1.0
 anchor_bottom = 1.0
 mouse_filter = 1
@@ -1507,6 +1618,7 @@ texture = SubResource( 26 )
 expand = true
 
 [node name="10JacobiIterants7" type="Control" parent="fluid/computePressure"]
+visible = false
 anchor_right = 1.0
 anchor_bottom = 1.0
 mouse_filter = 1
@@ -1682,6 +1794,7 @@ texture = SubResource( 26 )
 expand = true
 
 [node name="10JacobiIterants8" type="Control" parent="fluid/computePressure"]
+visible = false
 anchor_right = 1.0
 anchor_bottom = 1.0
 mouse_filter = 1
@@ -1857,6 +1970,7 @@ texture = SubResource( 26 )
 expand = true
 
 [node name="10JacobiIterants9" type="Control" parent="fluid/computePressure"]
+visible = false
 anchor_right = 1.0
 anchor_bottom = 1.0
 mouse_filter = 1
@@ -2032,6 +2146,7 @@ texture = SubResource( 26 )
 expand = true
 
 [node name="10JacobiIterants10" type="Control" parent="fluid/computePressure"]
+visible = false
 anchor_right = 1.0
 anchor_bottom = 1.0
 mouse_filter = 1
@@ -2207,6 +2322,7 @@ texture = SubResource( 26 )
 expand = true
 
 [node name="10JacobiIterants11" type="Control" parent="fluid/computePressure"]
+visible = false
 anchor_right = 1.0
 anchor_bottom = 1.0
 mouse_filter = 1
@@ -2382,6 +2498,7 @@ texture = SubResource( 26 )
 expand = true
 
 [node name="10JacobiIterants12" type="Control" parent="fluid/computePressure"]
+visible = false
 anchor_right = 1.0
 anchor_bottom = 1.0
 mouse_filter = 1
@@ -2557,7 +2674,7 @@ texture = SubResource( 26 )
 expand = true
 
 [node name="subtractPressureGradient" type="Viewport" parent="fluid"]
-size = Vector2( 1024, 576 )
+size = Vector2( 1024, 600 )
 handle_input_locally = false
 render_target_v_flip = true
 render_target_clear_mode = 2
@@ -2571,7 +2688,7 @@ texture = SubResource( 31 )
 expand = true
 
 [node name="Viewing" type="Viewport" parent="fluid"]
-size = Vector2( 1024, 576 )
+size = Vector2( 1024, 600 )
 handle_input_locally = false
 render_target_v_flip = true
 render_target_clear_mode = 2
@@ -2602,16 +2719,14 @@ __meta__ = {
 margin_right = 68.0
 margin_bottom = 20.0
 text = "Viewport"
-items = [ "Obstacles", null, 0, false, false, 0, 0, null, "", false, "Ink", null, 0, false, false, 1, 0, null, "", false, "Temperature", null, 0, false, false, 2, 0, null, "", false, "Velocity", null, 0, false, false, 3, 0, null, "", false, "Divergence", null, 0, false, false, 4, 0, null, "", false, "Pressure", null, 0, false, false, 5, 0, null, "", false ]
 switch_on_hover = true
 script = ExtResource( 8 )
 
 [node name="Brush" type="MenuButton" parent="GUI/VBoxContainer"]
 margin_left = 72.0
-margin_right = 163.0
+margin_right = 121.0
 margin_bottom = 20.0
 focus_mode = 2
-text = "Add velocity"
-items = [ "Obstacles", null, 0, false, false, 0, 0, null, "", false, "Velocity", null, 0, false, false, 1, 0, null, "", false, "Ink", null, 0, false, false, 2, 0, null, "", false ]
+text = "Brush"
 switch_on_hover = true
 script = ExtResource( 7 )

@@ -3,12 +3,14 @@ extends TextureRect
 
 
 export(float) var timestep = 1.0;
-export(float) var radius = 0.1;
+export(float) var radius = 1500.0;
 
 
 var mouse_pos = Vector2()
 var last_mouse_pos = Vector2()
 var brushType = "obstacle";
+
+var clearmodeSet = false;
 
 
 func _init():
@@ -24,7 +26,7 @@ func _process(delta):
 	
 
 func _input(event):
-	if Input.is_mouse_button_pressed(1) or Input.is_mouse_button_pressed(1) and InputEventMouseMotion:
+	if (Input.is_mouse_button_pressed(1) or Input.is_mouse_button_pressed(2)) and event is InputEventMouseMotion:
 		match brushType:
 			"velocity":
 				addVelocitySplat()
@@ -59,7 +61,10 @@ func addVelocitySplat():
 	else:
 		addVelocity.set_shader_param("radius", 0.0)
 
-func addObstacleSplat():	
+func addObstacleSplat():
+	if !clearmodeSet:
+		get_node("Obstacles").set_clear_mode(1)
+		clearmodeSet = true
 	var addObstacle = get_node("Obstacles/addObstacles").material
 	
 	addObstacle.set_shader_param("point", mouse_pos)
@@ -75,17 +80,16 @@ func addObstacleSplat():
 		addObstacle.set_shader_param("radius", 0.0)
 
 func addInkSplat():
-	var addVelocity = get_node("AddForces(u)/velocitySplat").material
+	var addInk = get_node("Ink/addInk").material
 	
-	addVelocity.set_shader_param("point", mouse_pos)
+	addInk.set_shader_param("point", mouse_pos)
 	
 	var delta_mouse = mouse_pos - last_mouse_pos
-	var mouse_color = (delta_mouse.normalized()*0.5 + Vector2(0.5, 0.5))
 	
 	if delta_mouse.length() > 0:
-		addVelocity.set_shader_param("color", Color(mouse_color.x, mouse_color.y, 0.0))
+		addInk.set_shader_param("color", Color(0.0, 0.0, 0.0))
 		
 	if Input.is_mouse_button_pressed(BUTTON_LEFT):
-		addVelocity.set_shader_param("radius", radius)
+		addInk.set_shader_param("radius", radius)
 	else:
-		addVelocity.set_shader_param("radius", 0.0)
+		addInk.set_shader_param("radius", 0.0)
