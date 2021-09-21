@@ -26,7 +26,8 @@ func _process(delta):
 	
 
 func _input(event):
-	if (Input.is_mouse_button_pressed(1) or Input.is_mouse_button_pressed(2)) and event is InputEventMouseMotion:
+	if ((Input.is_mouse_button_pressed(1) or Input.is_mouse_button_pressed(2)) 
+	and event is InputEventMouseMotion and Input.is_action_pressed("paint")):
 		match brushType:
 			"velocity":
 				addVelocitySplat()

@@ -29,16 +29,14 @@ vec2 bilinearInterpolation(sampler2D tex, vec2 pos, vec2 rdx){
 		// Roll-over to left side
 		p11 = texture(tex, (integer + vec2(0.5, 0.5)) * rdx).xy;
 		p12 = texture(tex, (integer + vec2(0.5, 1.5)) * rdx).xy;
-		p21 = texture(tex, (integer * vec2(0.0, 1.0) + vec2(0.5, 0.5)) * rdx).xy;
-		p22 = texture(tex, (integer * vec2(0.0, 1.0) + vec2(0.5, 1.5)) * rdx).xy;
-		return vec2(0.0)
+		p21 = texture(tex, (vec2(0.5, integer.y + 0.5)) * rdx).xy;
+		p22 = texture(tex, (vec2(0.5, integer.y + 1.5)) * rdx).xy;
 	} else if (pos.x < rdx.x) {
 		// Roll-over to right side
-		p11 = texture(tex, (integer + vec2(0.5, 0.5)) * rdx).xy;
-		p12 = texture(tex, (integer + vec2(0.5, 1.5)) * rdx).xy;
-		p21 = texture(tex, (integer + vec2((1.0/rdx.x) + 0.5, 0.5)) * rdx).xy;
-		p22 = texture(tex, (integer + vec2((1.0/rdx.x) + 0.5, 1.5)) * rdx).xy;
-		return vec2(1.0)
+		p11 = texture(tex, (vec2(1.5, integer.y + 0.5) + vec2(1.0/rdx.x, 0.0)) * rdx).xy;
+		p12 = texture(tex, (vec2(1.5, integer.y + 1.5) + vec2(1.0/rdx.x, 0.0)) * rdx).xy;
+		p21 = texture(tex, (integer + vec2(1.5, 0.5)) * rdx).xy;
+		p22 = texture(tex, (integer + vec2(1.5, 1.5)) * rdx).xy;
 	} else {
 		// Weight the points
 		p11 = texture(tex, (integer + vec2(0.5, 0.5)) * rdx).xy;
@@ -91,43 +89,28 @@ void fragment(){
 		outputVelocity = vec2(0.0);
 
 	} else if (checkTop > 0.0 || checkBottom > 0.0) {
-		outputVelocity.y *= -1.0;
+		outputVelocity.y *= 1.0;
 
 	} else if (checkLeft > 0.0 || checkRight > 0.0) {
-		outputVelocity.x *= -1.0;
+		outputVelocity.x *= 1.0;
 
 	}
 
 //	// Apply boundary conditions
-//	if(UV.x > 1.0 - SCREEN_PIXEL_SIZE.x){
-//		outputVelocity.x = -texture(u, UV - vec2(1.0, 0.0) * SCREEN_PIXEL_SIZE).x;
-//
-//	} else if (UV.y > 1.0 - SCREEN_PIXEL_SIZE.y) {
-//		outputVelocity.y = -texture(u, UV - vec2(0.0, 1.0) * SCREEN_PIXEL_SIZE).y;
-//
-//	} else if (UV.x < SCREEN_PIXEL_SIZE.x) {
-//		outputVelocity.x = -texture(u, UV + vec2(1.0, 0.0) * SCREEN_PIXEL_SIZE).x;
-//
-//	} else if (UV.y < SCREEN_PIXEL_SIZE.y) {
-//		outputVelocity.y = -texture(u, UV + vec2(0.0, 1.0) * SCREEN_PIXEL_SIZE).y;
-//
+	
+	if (UV.y > 1.0 - SCREEN_PIXEL_SIZE.y) {
+		outputVelocity.y = -texture(u, UV - vec2(0.0, 1.0) * SCREEN_PIXEL_SIZE).y;
+
+	} else if (UV.y < SCREEN_PIXEL_SIZE.y) {
+		outputVelocity.y = -texture(u, UV + vec2(0.0, 1.0) * SCREEN_PIXEL_SIZE).y;
+
+	}
+	
+//	if (UV.x > 0.49 && UV.x < 0.51 && UV.y > 0.49 && UV.y < 0.51){
+//		outputVelocity.x += cos(TIME);
+//		outputVelocity.y += sin(TIME);
 //	}
 	
-	// Do the corners
-	if (UV.x > 1.0 - SCREEN_PIXEL_SIZE.x && UV.y > 1.0 - SCREEN_PIXEL_SIZE.y){
-		outputVelocity = vec2(0.0);
-		
-	} else if (UV.x < SCREEN_PIXEL_SIZE.x && UV.y > 1.0 - SCREEN_PIXEL_SIZE.y){
-		outputVelocity = vec2(0.0);
-		
-	} else if (UV.x > 1.0 - SCREEN_PIXEL_SIZE.x && UV.y < SCREEN_PIXEL_SIZE.y){
-		outputVelocity = vec2(0.0);
-		
-	} else if (UV.x < SCREEN_PIXEL_SIZE.x && UV.y < SCREEN_PIXEL_SIZE.y){
-		outputVelocity = vec2(0.0);
-		
-	}
-
 	// Check for obstacles
 	if (checkPoint > 0.0){
 		outputVelocity = vec2(0.0);

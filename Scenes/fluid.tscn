@@ -1,5 +1,6 @@
-[gd_scene load_steps=48 format=2]
+[gd_scene load_steps=49 format=2]
 
+[ext_resource path="res://Scenes/HSlider.gd" type="Script" id=1]
 [ext_resource path="res://FluidShader/divergence.tres" type="Material" id=2]
 [ext_resource path="res://Scripts/fluid.gd" type="Script" id=3]
 [ext_resource path="res://FluidShader/advectVelocity.shader" type="Shader" id=4]
@@ -8,15 +9,15 @@
 [ext_resource path="res://Scripts/Brush.gd" type="Script" id=7]
 [ext_resource path="res://Scripts/ChooseViewport.gd" type="Script" id=8]
 
-[sub_resource type="ViewportTexture" id=1]
+[sub_resource type="ViewportTexture" id=34]
 viewport_path = NodePath("fluid/Viewing")
 
-[sub_resource type="ImageTexture" id=2]
+[sub_resource type="ImageTexture" id=35]
 flags = 0
 flags = 0
 size = Vector2( 1, 1 )
 
-[sub_resource type="Shader" id=3]
+[sub_resource type="Shader" id=36]
 code = "shader_type canvas_item;
 
 uniform vec4 color : hint_color;
@@ -41,19 +42,19 @@ void fragment()
 	}
 }"
 
-[sub_resource type="ShaderMaterial" id=5]
+[sub_resource type="ShaderMaterial" id=37]
 resource_local_to_scene = true
-shader = SubResource( 3 )
+shader = SubResource( 36 )
 shader_param/color = Color( 1, 1, 1, 1 )
 shader_param/point = null
 shader_param/radius = 0.0
 
-[sub_resource type="ImageTexture" id=6]
+[sub_resource type="ImageTexture" id=38]
 flags = 0
 flags = 0
 size = Vector2( 1, 1 )
 
-[sub_resource type="Shader" id=7]
+[sub_resource type="Shader" id=39]
 code = "shader_type canvas_item;
 
 uniform float timestep;
@@ -68,13 +69,35 @@ vec2 bilinearInterpolation(sampler2D tex, vec2 pos, vec2 rdx){
 	vec2 p = pos / rdx - 0.5;
 	vec2 fraction = fract(p);
 	vec2 integer = floor(p);
-
-	// Weight the points
-	vec2 p11 = texture(tex, (integer + vec2(0.5, 0.5)) * rdx).xy;
-	vec2 p12 = texture(tex, (integer + vec2(0.5, 1.5)) * rdx).xy;
-	vec2 p21 = texture(tex, (integer + vec2(1.5, 0.5)) * rdx).xy;
-	vec2 p22 = texture(tex, (integer + vec2(1.5, 1.5)) * rdx).xy;
-
+	
+	// Define points
+	vec2 p11 = vec2(0.0);
+	vec2 p12 = vec2(0.0);
+	vec2 p21 = vec2(0.0);
+	vec2 p22 = vec2(0.0);
+		
+	if (pos.x > 1.0 - rdx.x) {
+		// Roll-over to left side
+		p11 = texture(tex, (integer + vec2(0.5, 0.5)) * rdx).xy;
+		p12 = texture(tex, (integer + vec2(0.5, 1.5)) * rdx).xy;
+		p21 = texture(tex, (integer * vec2(0.0, 1.0) + vec2(0.5, 0.5)) * rdx).xy;
+		p22 = texture(tex, (integer * vec2(0.0, 1.0) + vec2(0.5, 1.5)) * rdx).xy;
+		return vec2(0.0)
+	} else if (pos.x < rdx.x) {
+		// Roll-over to right side
+		p11 = texture(tex, (integer + vec2(0.5, 0.5)) * rdx).xy;
+		p12 = texture(tex, (integer + vec2(0.5, 1.5)) * rdx).xy;
+		p21 = texture(tex, (integer + vec2((1.0/rdx.x) + 0.5, 0.5)) * rdx).xy;
+		p22 = texture(tex, (integer + vec2((1.0/rdx.x) + 0.5, 1.5)) * rdx).xy;
+		return vec2(1.0)
+	} else {
+		// Weight the points
+		p11 = texture(tex, (integer + vec2(0.5, 0.5)) * rdx).xy;
+		p12 = texture(tex, (integer + vec2(0.5, 1.5)) * rdx).xy;
+		p21 = texture(tex, (integer + vec2(1.5, 0.5)) * rdx).xy;
+		p22 = texture(tex, (integer + vec2(1.5, 1.5)) * rdx).xy;
+	}
+	
 	return mix(mix(p11, p21, fraction.x), mix(p12, p22, fraction.x), fraction.y);
 }
 
@@ -96,41 +119,20 @@ void fragment(){
 		outputVelocity = vec2(0.0);
 
 	} else if (checkTop > 0.0 || checkBottom > 0.0) {
-		outputVelocity.y *= -1.0;
+		outputVelocity.y *= 0.0;
 
 	} else if (checkLeft > 0.0 || checkRight > 0.0) {
-		outputVelocity.x *= -1.0;
+		outputVelocity.x *= 0.0;
 
 	}
 
-	// Apply boundary conditions
-	if(UV.x > 1.0 - SCREEN_PIXEL_SIZE.x){
-		outputVelocity.x = -texture(u, UV - vec2(1.0, 0.0) * SCREEN_PIXEL_SIZE).x;
-
-	} else if (UV.y > 1.0 - SCREEN_PIXEL_SIZE.y) {
+		// Apply boundary conditions
+	if (UV.y > 1.0 - SCREEN_PIXEL_SIZE.y) {
 		outputVelocity.y = -texture(u, UV - vec2(0.0, 1.0) * SCREEN_PIXEL_SIZE).y;
-
-	} else if (UV.x < SCREEN_PIXEL_SIZE.x) {
-		outputVelocity.x = -texture(u, UV + vec2(1.0, 0.0) * SCREEN_PIXEL_SIZE).x;
 
 	} else if (UV.y < SCREEN_PIXEL_SIZE.y) {
 		outputVelocity.y = -texture(u, UV + vec2(0.0, 1.0) * SCREEN_PIXEL_SIZE).y;
 
-	}
-	
-	// Do the corners
-	if (UV.x > 1.0 - SCREEN_PIXEL_SIZE.x && UV.y > 1.0 - SCREEN_PIXEL_SIZE.y){
-		outputVelocity = vec2(0.0);
-		
-	} else if (UV.x < SCREEN_PIXEL_SIZE.x && UV.y > 1.0 - SCREEN_PIXEL_SIZE.y){
-		outputVelocity = vec2(0.0);
-		
-	} else if (UV.x > 1.0 - SCREEN_PIXEL_SIZE.x && UV.y < SCREEN_PIXEL_SIZE.y){
-		outputVelocity = vec2(0.0);
-		
-	} else if (UV.x < SCREEN_PIXEL_SIZE.x && UV.y < SCREEN_PIXEL_SIZE.y){
-		outputVelocity = vec2(0.0);
-		
 	}
 	
 		// Added obstacles to a new viewport texture
@@ -143,24 +145,24 @@ void fragment(){
 	
 }"
 
-[sub_resource type="ViewportTexture" id=8]
+[sub_resource type="ViewportTexture" id=40]
 viewport_path = NodePath("fluid/Obstacles")
 
-[sub_resource type="ViewportTexture" id=9]
+[sub_resource type="ViewportTexture" id=41]
 viewport_path = NodePath("fluid/subtractPressureGradient")
 
-[sub_resource type="ViewportTexture" id=10]
+[sub_resource type="ViewportTexture" id=42]
 viewport_path = NodePath("fluid/Ink")
 
-[sub_resource type="ShaderMaterial" id=11]
+[sub_resource type="ShaderMaterial" id=43]
 resource_local_to_scene = true
-shader = SubResource( 7 )
-shader_param/timestep = 0.583333
-shader_param/u = SubResource( 9 )
-shader_param/x = SubResource( 10 )
-shader_param/obstacles = SubResource( 8 )
+shader = SubResource( 39 )
+shader_param/timestep = 0.416667
+shader_param/u = SubResource( 41 )
+shader_param/x = SubResource( 42 )
+shader_param/obstacles = SubResource( 40 )
 
-[sub_resource type="Shader" id=40]
+[sub_resource type="Shader" id=44]
 code = "shader_type canvas_item;
 
 uniform vec4 color : hint_color;
@@ -186,14 +188,14 @@ void fragment()
     
 }"
 
-[sub_resource type="ShaderMaterial" id=41]
+[sub_resource type="ShaderMaterial" id=45]
 resource_local_to_scene = true
-shader = SubResource( 40 )
+shader = SubResource( 44 )
 shader_param/color = Color( 1, 1, 1, 1 )
 shader_param/point = null
 shader_param/radius = null
 
-[sub_resource type="Shader" id=12]
+[sub_resource type="Shader" id=46]
 code = "shader_type canvas_item;
 
 const float PI = 3.14159265;
@@ -207,52 +209,52 @@ void fragment(){
 	COLOR = TempGradient;
 }"
 
-[sub_resource type="ShaderMaterial" id=13]
-shader = SubResource( 12 )
+[sub_resource type="ShaderMaterial" id=47]
+shader = SubResource( 46 )
 
-[sub_resource type="ImageTexture" id=14]
+[sub_resource type="ImageTexture" id=48]
 flags = 0
 flags = 0
 size = Vector2( 1, 1 )
 
-[sub_resource type="ViewportTexture" id=15]
+[sub_resource type="ViewportTexture" id=49]
 viewport_path = NodePath("fluid/Temperature")
 
-[sub_resource type="ViewportTexture" id=16]
+[sub_resource type="ViewportTexture" id=50]
 viewport_path = NodePath("fluid/Obstacles")
 
-[sub_resource type="ViewportTexture" id=17]
+[sub_resource type="ViewportTexture" id=51]
 viewport_path = NodePath("fluid/subtractPressureGradient")
 
-[sub_resource type="ViewportTexture" id=18]
+[sub_resource type="ViewportTexture" id=52]
 viewport_path = NodePath("fluid/subtractPressureGradient")
 
-[sub_resource type="ShaderMaterial" id=19]
+[sub_resource type="ShaderMaterial" id=53]
 resource_local_to_scene = true
 shader = ExtResource( 4 )
-shader_param/timestep = 0.583333
-shader_param/u = SubResource( 17 )
-shader_param/x = SubResource( 18 )
-shader_param/obstacles = SubResource( 16 )
-shader_param/T = SubResource( 15 )
+shader_param/timestep = 0.416667
+shader_param/u = SubResource( 51 )
+shader_param/x = SubResource( 52 )
+shader_param/obstacles = SubResource( 50 )
+shader_param/T = SubResource( 49 )
 
-[sub_resource type="ViewportTexture" id=20]
+[sub_resource type="ViewportTexture" id=54]
 viewport_path = NodePath("fluid/Advection(u)")
 
-[sub_resource type="ShaderMaterial" id=21]
+[sub_resource type="ShaderMaterial" id=55]
 resource_local_to_scene = true
 shader = ExtResource( 5 )
 shader_param/color = Color( 1, 1, 1, 1 )
 shader_param/point = Vector2( 1550.93, -206.235 )
 shader_param/radius = 0.0
-shader_param/tempVelocity = SubResource( 20 )
+shader_param/tempVelocity = SubResource( 54 )
 
-[sub_resource type="ImageTexture" id=22]
+[sub_resource type="ImageTexture" id=56]
 flags = 0
 flags = 0
 size = Vector2( 1, 1 )
 
-[sub_resource type="Shader" id=23]
+[sub_resource type="Shader" id=57]
 resource_local_to_scene = true
 code = "shader_type canvas_item;
 
@@ -265,18 +267,11 @@ float samplePressure(vec2 pos, vec2 border, sampler2D p)
 		return 0.0;
 	}
 	
-    // Boundary condition: Vanish for at walls.
-//    if(pos.x > 1.0 - border.x){
-//		return texture(p, pos - border * vec2(1.0, 0.0)).x;
-//
-//	} else if (pos.x < border.x){
-//		return texture(p, pos + border * vec2(1.0, 0.0)).x;
-
 	if(pos.x > 1.0 - border.x){ // Right border
-		return texture(p, border * vec2(1.0, 0.0)).x;
+		return texture(p, vec2(border.x, pos.y)).x;
 	
 	} else if (pos.x < border.x){ // Left border
-		return texture(p, (1.0 / pos.x) * vec2(1.0, 0.0)).x;
+		return texture(p, vec2(1.0/border.x, pos.y)).x;
 		
 	} else if (pos.y > 1.0 - border.y){
 		return texture(p, pos - border * vec2(0.0, 1.0)).x;
@@ -306,20 +301,20 @@ void fragment(){
    	COLOR = vec4(vec2(((x0 + x1 + y0 + y1 + (alpha * div)) * rbeta)), 0.0, 1.0);
 } "
 
-[sub_resource type="ViewportTexture" id=24]
+[sub_resource type="ViewportTexture" id=58]
 viewport_path = NodePath("fluid/Divergence(u)")
 
-[sub_resource type="ShaderMaterial" id=25]
+[sub_resource type="ShaderMaterial" id=59]
 resource_local_to_scene = true
-shader = SubResource( 23 )
-shader_param/divw = SubResource( 24 )
+shader = SubResource( 57 )
+shader_param/divw = SubResource( 58 )
 
-[sub_resource type="ImageTexture" id=26]
+[sub_resource type="ImageTexture" id=60]
 flags = 0
 flags = 0
 size = Vector2( 1, 1 )
 
-[sub_resource type="Shader" id=27]
+[sub_resource type="Shader" id=61]
 code = "shader_type canvas_item;
 
 uniform sampler2D p; // Pressure
@@ -345,24 +340,24 @@ void fragment(){
 
 }"
 
-[sub_resource type="ViewportTexture" id=28]
+[sub_resource type="ViewportTexture" id=62]
 viewport_path = NodePath("fluid/computePressure")
 
-[sub_resource type="ViewportTexture" id=29]
+[sub_resource type="ViewportTexture" id=63]
 viewport_path = NodePath("fluid/AddForces(u)")
 
-[sub_resource type="ShaderMaterial" id=30]
+[sub_resource type="ShaderMaterial" id=64]
 resource_local_to_scene = true
-shader = SubResource( 27 )
-shader_param/p = SubResource( 28 )
-shader_param/w = SubResource( 29 )
+shader = SubResource( 61 )
+shader_param/p = SubResource( 62 )
+shader_param/w = SubResource( 63 )
 
-[sub_resource type="ImageTexture" id=31]
+[sub_resource type="ImageTexture" id=65]
 flags = 0
 flags = 0
 size = Vector2( 1, 1 )
 
-[sub_resource type="Shader" id=32]
+[sub_resource type="Shader" id=33]
 code = "shader_type canvas_item;
 
 uniform sampler2D velocity; // == 0
@@ -372,7 +367,7 @@ uniform sampler2D divergence; // == 3
 uniform sampler2D pressure; // == 4
 uniform sampler2D ink; // == 5
 
-uniform int viewport = 0;
+uniform int viewport = 2;
 
 void fragment(){
 	
@@ -402,41 +397,41 @@ void fragment(){
 	}
 }"
 
-[sub_resource type="ViewportTexture" id=36]
+[sub_resource type="ViewportTexture" id=66]
 viewport_path = NodePath("fluid/Divergence(u)")
 
-[sub_resource type="ViewportTexture" id=39]
+[sub_resource type="ViewportTexture" id=67]
 viewport_path = NodePath("fluid/Ink")
 
-[sub_resource type="ViewportTexture" id=37]
+[sub_resource type="ViewportTexture" id=68]
 viewport_path = NodePath("fluid/Obstacles")
 
-[sub_resource type="ViewportTexture" id=38]
+[sub_resource type="ViewportTexture" id=69]
 viewport_path = NodePath("fluid/computePressure")
 
-[sub_resource type="ViewportTexture" id=33]
+[sub_resource type="ViewportTexture" id=70]
 viewport_path = NodePath("fluid/Temperature")
 
-[sub_resource type="ViewportTexture" id=34]
+[sub_resource type="ViewportTexture" id=71]
 viewport_path = NodePath("fluid/subtractPressureGradient")
 
-[sub_resource type="ShaderMaterial" id=35]
+[sub_resource type="ShaderMaterial" id=72]
 resource_local_to_scene = true
-shader = SubResource( 32 )
+shader = SubResource( 33 )
 shader_param/viewport = 0
-shader_param/velocity = SubResource( 34 )
-shader_param/temperature = SubResource( 33 )
-shader_param/obstacles = SubResource( 37 )
-shader_param/divergence = SubResource( 36 )
-shader_param/pressure = SubResource( 38 )
-shader_param/ink = SubResource( 39 )
+shader_param/velocity = SubResource( 71 )
+shader_param/temperature = SubResource( 70 )
+shader_param/obstacles = SubResource( 68 )
+shader_param/divergence = SubResource( 66 )
+shader_param/pressure = SubResource( 69 )
+shader_param/ink = SubResource( 67 )
 
 [node name="Canvas" type="CanvasLayer"]
 
 [node name="fluid" type="TextureRect" parent="."]
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 1 )
+texture = SubResource( 34 )
 expand = true
 script = ExtResource( 3 )
 __meta__ = {
@@ -457,17 +452,17 @@ anchor_right = 1.0
 anchor_bottom = 1.0
 size_flags_horizontal = 2
 size_flags_vertical = 2
-texture = SubResource( 2 )
+texture = SubResource( 35 )
 expand = true
 
 [node name="buffer" type="BackBufferCopy" parent="fluid/Obstacles"]
 copy_mode = 2
 
 [node name="addObstacles" type="TextureRect" parent="fluid/Obstacles"]
-material = SubResource( 5 )
+material = SubResource( 37 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 6 )
+texture = SubResource( 38 )
 expand = true
 
 [node name="Ink" type="Viewport" parent="fluid"]
@@ -478,22 +473,22 @@ render_target_clear_mode = 2
 render_target_update_mode = 3
 
 [node name="ink" type="TextureRect" parent="fluid/Ink"]
-material = SubResource( 11 )
+material = SubResource( 43 )
 anchor_right = 1.0
 anchor_bottom = 1.0
 size_flags_horizontal = 2
 size_flags_vertical = 2
-texture = SubResource( 2 )
+texture = SubResource( 35 )
 expand = true
 
 [node name="buffer" type="BackBufferCopy" parent="fluid/Ink"]
 copy_mode = 2
 
 [node name="addInk" type="TextureRect" parent="fluid/Ink"]
-material = SubResource( 41 )
+material = SubResource( 45 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 6 )
+texture = SubResource( 38 )
 expand = true
 
 [node name="Temperature" type="Viewport" parent="fluid"]
@@ -504,10 +499,10 @@ render_target_clear_mode = 2
 render_target_update_mode = 3
 
 [node name="temperature" type="TextureRect" parent="fluid/Temperature"]
-material = SubResource( 13 )
+material = SubResource( 47 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 14 )
+texture = SubResource( 48 )
 expand = true
 
 [node name="Advection(u)" type="Viewport" parent="fluid"]
@@ -518,10 +513,10 @@ render_target_clear_mode = 2
 render_target_update_mode = 3
 
 [node name="velocity" type="TextureRect" parent="fluid/Advection(u)"]
-material = SubResource( 19 )
+material = SubResource( 53 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 14 )
+texture = SubResource( 48 )
 expand = true
 
 [node name="Diffusion(u)" type="Viewport" parent="fluid"]
@@ -539,10 +534,10 @@ render_target_clear_mode = 2
 render_target_update_mode = 3
 
 [node name="velocitySplat" type="TextureRect" parent="fluid/AddForces(u)"]
-material = SubResource( 21 )
+material = SubResource( 55 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 6 )
+texture = SubResource( 38 )
 expand = true
 
 [node name="Divergence(u)" type="Viewport" parent="fluid"]
@@ -556,7 +551,7 @@ render_target_update_mode = 3
 material = ExtResource( 2 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 22 )
+texture = SubResource( 56 )
 expand = true
 
 [node name="computePressure" type="Viewport" parent="fluid"]
@@ -582,10 +577,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants/JacobiIterant"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant2" type="Control" parent="fluid/computePressure/10JacobiIterants"]
@@ -599,10 +594,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants/JacobiIterant2"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant3" type="Control" parent="fluid/computePressure/10JacobiIterants"]
@@ -616,10 +611,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants/JacobiIterant3"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant4" type="Control" parent="fluid/computePressure/10JacobiIterants"]
@@ -633,10 +628,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants/JacobiIterant4"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant5" type="Control" parent="fluid/computePressure/10JacobiIterants"]
@@ -650,10 +645,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants/JacobiIterant5"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant6" type="Control" parent="fluid/computePressure/10JacobiIterants"]
@@ -667,10 +662,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants/JacobiIterant6"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant7" type="Control" parent="fluid/computePressure/10JacobiIterants"]
@@ -684,10 +679,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants/JacobiIterant7"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant8" type="Control" parent="fluid/computePressure/10JacobiIterants"]
@@ -701,10 +696,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants/JacobiIterant8"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant9" type="Control" parent="fluid/computePressure/10JacobiIterants"]
@@ -718,10 +713,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants/JacobiIterant9"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant10" type="Control" parent="fluid/computePressure/10JacobiIterants"]
@@ -735,13 +730,14 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants/JacobiIterant10"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="10JacobiIterants2" type="Control" parent="fluid/computePressure"]
+visible = false
 anchor_right = 1.0
 anchor_bottom = 1.0
 mouse_filter = 1
@@ -757,10 +753,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants2/JacobiIterant"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant2" type="Control" parent="fluid/computePressure/10JacobiIterants2"]
@@ -774,10 +770,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants2/JacobiIterant2"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant3" type="Control" parent="fluid/computePressure/10JacobiIterants2"]
@@ -791,10 +787,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants2/JacobiIterant3"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant4" type="Control" parent="fluid/computePressure/10JacobiIterants2"]
@@ -808,10 +804,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants2/JacobiIterant4"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant5" type="Control" parent="fluid/computePressure/10JacobiIterants2"]
@@ -825,10 +821,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants2/JacobiIterant5"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant6" type="Control" parent="fluid/computePressure/10JacobiIterants2"]
@@ -842,10 +838,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants2/JacobiIterant6"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant7" type="Control" parent="fluid/computePressure/10JacobiIterants2"]
@@ -859,10 +855,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants2/JacobiIterant7"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant8" type="Control" parent="fluid/computePressure/10JacobiIterants2"]
@@ -876,10 +872,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants2/JacobiIterant8"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant9" type="Control" parent="fluid/computePressure/10JacobiIterants2"]
@@ -893,10 +889,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants2/JacobiIterant9"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant10" type="Control" parent="fluid/computePressure/10JacobiIterants2"]
@@ -910,13 +906,14 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants2/JacobiIterant10"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="10JacobiIterants3" type="Control" parent="fluid/computePressure"]
+visible = false
 anchor_right = 1.0
 anchor_bottom = 1.0
 mouse_filter = 1
@@ -932,10 +929,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants3/JacobiIterant"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant2" type="Control" parent="fluid/computePressure/10JacobiIterants3"]
@@ -949,10 +946,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants3/JacobiIterant2"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant3" type="Control" parent="fluid/computePressure/10JacobiIterants3"]
@@ -966,10 +963,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants3/JacobiIterant3"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant4" type="Control" parent="fluid/computePressure/10JacobiIterants3"]
@@ -983,10 +980,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants3/JacobiIterant4"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant5" type="Control" parent="fluid/computePressure/10JacobiIterants3"]
@@ -1000,10 +997,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants3/JacobiIterant5"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant6" type="Control" parent="fluid/computePressure/10JacobiIterants3"]
@@ -1017,10 +1014,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants3/JacobiIterant6"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant7" type="Control" parent="fluid/computePressure/10JacobiIterants3"]
@@ -1034,10 +1031,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants3/JacobiIterant7"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant8" type="Control" parent="fluid/computePressure/10JacobiIterants3"]
@@ -1051,10 +1048,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants3/JacobiIterant8"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant9" type="Control" parent="fluid/computePressure/10JacobiIterants3"]
@@ -1068,10 +1065,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants3/JacobiIterant9"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant10" type="Control" parent="fluid/computePressure/10JacobiIterants3"]
@@ -1085,13 +1082,14 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants3/JacobiIterant10"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="10JacobiIterants4" type="Control" parent="fluid/computePressure"]
+visible = false
 anchor_right = 1.0
 anchor_bottom = 1.0
 mouse_filter = 1
@@ -1107,10 +1105,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants4/JacobiIterant"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant2" type="Control" parent="fluid/computePressure/10JacobiIterants4"]
@@ -1124,10 +1122,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants4/JacobiIterant2"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant3" type="Control" parent="fluid/computePressure/10JacobiIterants4"]
@@ -1141,10 +1139,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants4/JacobiIterant3"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant4" type="Control" parent="fluid/computePressure/10JacobiIterants4"]
@@ -1158,10 +1156,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants4/JacobiIterant4"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant5" type="Control" parent="fluid/computePressure/10JacobiIterants4"]
@@ -1175,10 +1173,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants4/JacobiIterant5"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant6" type="Control" parent="fluid/computePressure/10JacobiIterants4"]
@@ -1192,10 +1190,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants4/JacobiIterant6"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant7" type="Control" parent="fluid/computePressure/10JacobiIterants4"]
@@ -1209,10 +1207,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants4/JacobiIterant7"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant8" type="Control" parent="fluid/computePressure/10JacobiIterants4"]
@@ -1226,10 +1224,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants4/JacobiIterant8"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant9" type="Control" parent="fluid/computePressure/10JacobiIterants4"]
@@ -1243,10 +1241,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants4/JacobiIterant9"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant10" type="Control" parent="fluid/computePressure/10JacobiIterants4"]
@@ -1260,13 +1258,14 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants4/JacobiIterant10"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="10JacobiIterants5" type="Control" parent="fluid/computePressure"]
+visible = false
 anchor_right = 1.0
 anchor_bottom = 1.0
 mouse_filter = 1
@@ -1282,10 +1281,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants5/JacobiIterant"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant2" type="Control" parent="fluid/computePressure/10JacobiIterants5"]
@@ -1299,10 +1298,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants5/JacobiIterant2"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant3" type="Control" parent="fluid/computePressure/10JacobiIterants5"]
@@ -1316,10 +1315,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants5/JacobiIterant3"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant4" type="Control" parent="fluid/computePressure/10JacobiIterants5"]
@@ -1333,10 +1332,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants5/JacobiIterant4"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant5" type="Control" parent="fluid/computePressure/10JacobiIterants5"]
@@ -1350,10 +1349,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants5/JacobiIterant5"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant6" type="Control" parent="fluid/computePressure/10JacobiIterants5"]
@@ -1367,10 +1366,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants5/JacobiIterant6"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant7" type="Control" parent="fluid/computePressure/10JacobiIterants5"]
@@ -1384,10 +1383,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants5/JacobiIterant7"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant8" type="Control" parent="fluid/computePressure/10JacobiIterants5"]
@@ -1401,10 +1400,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants5/JacobiIterant8"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant9" type="Control" parent="fluid/computePressure/10JacobiIterants5"]
@@ -1418,10 +1417,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants5/JacobiIterant9"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant10" type="Control" parent="fluid/computePressure/10JacobiIterants5"]
@@ -1435,10 +1434,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants5/JacobiIterant10"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="10JacobiIterants6" type="Control" parent="fluid/computePressure"]
@@ -1458,10 +1457,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants6/JacobiIterant"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant2" type="Control" parent="fluid/computePressure/10JacobiIterants6"]
@@ -1475,10 +1474,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants6/JacobiIterant2"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant3" type="Control" parent="fluid/computePressure/10JacobiIterants6"]
@@ -1492,10 +1491,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants6/JacobiIterant3"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant4" type="Control" parent="fluid/computePressure/10JacobiIterants6"]
@@ -1509,10 +1508,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants6/JacobiIterant4"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant5" type="Control" parent="fluid/computePressure/10JacobiIterants6"]
@@ -1526,10 +1525,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants6/JacobiIterant5"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant6" type="Control" parent="fluid/computePressure/10JacobiIterants6"]
@@ -1543,10 +1542,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants6/JacobiIterant6"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant7" type="Control" parent="fluid/computePressure/10JacobiIterants6"]
@@ -1560,10 +1559,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants6/JacobiIterant7"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant8" type="Control" parent="fluid/computePressure/10JacobiIterants6"]
@@ -1577,10 +1576,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants6/JacobiIterant8"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant9" type="Control" parent="fluid/computePressure/10JacobiIterants6"]
@@ -1594,10 +1593,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants6/JacobiIterant9"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant10" type="Control" parent="fluid/computePressure/10JacobiIterants6"]
@@ -1611,10 +1610,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants6/JacobiIterant10"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="10JacobiIterants7" type="Control" parent="fluid/computePressure"]
@@ -1634,10 +1633,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants7/JacobiIterant"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant2" type="Control" parent="fluid/computePressure/10JacobiIterants7"]
@@ -1651,10 +1650,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants7/JacobiIterant2"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant3" type="Control" parent="fluid/computePressure/10JacobiIterants7"]
@@ -1668,10 +1667,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants7/JacobiIterant3"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant4" type="Control" parent="fluid/computePressure/10JacobiIterants7"]
@@ -1685,10 +1684,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants7/JacobiIterant4"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant5" type="Control" parent="fluid/computePressure/10JacobiIterants7"]
@@ -1702,10 +1701,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants7/JacobiIterant5"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant6" type="Control" parent="fluid/computePressure/10JacobiIterants7"]
@@ -1719,10 +1718,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants7/JacobiIterant6"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant7" type="Control" parent="fluid/computePressure/10JacobiIterants7"]
@@ -1736,10 +1735,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants7/JacobiIterant7"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant8" type="Control" parent="fluid/computePressure/10JacobiIterants7"]
@@ -1753,10 +1752,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants7/JacobiIterant8"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant9" type="Control" parent="fluid/computePressure/10JacobiIterants7"]
@@ -1770,10 +1769,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants7/JacobiIterant9"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant10" type="Control" parent="fluid/computePressure/10JacobiIterants7"]
@@ -1787,10 +1786,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants7/JacobiIterant10"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="10JacobiIterants8" type="Control" parent="fluid/computePressure"]
@@ -1810,10 +1809,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants8/JacobiIterant"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant2" type="Control" parent="fluid/computePressure/10JacobiIterants8"]
@@ -1827,10 +1826,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants8/JacobiIterant2"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant3" type="Control" parent="fluid/computePressure/10JacobiIterants8"]
@@ -1844,10 +1843,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants8/JacobiIterant3"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant4" type="Control" parent="fluid/computePressure/10JacobiIterants8"]
@@ -1861,10 +1860,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants8/JacobiIterant4"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant5" type="Control" parent="fluid/computePressure/10JacobiIterants8"]
@@ -1878,10 +1877,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants8/JacobiIterant5"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant6" type="Control" parent="fluid/computePressure/10JacobiIterants8"]
@@ -1895,10 +1894,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants8/JacobiIterant6"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant7" type="Control" parent="fluid/computePressure/10JacobiIterants8"]
@@ -1912,10 +1911,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants8/JacobiIterant7"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant8" type="Control" parent="fluid/computePressure/10JacobiIterants8"]
@@ -1929,10 +1928,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants8/JacobiIterant8"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant9" type="Control" parent="fluid/computePressure/10JacobiIterants8"]
@@ -1946,10 +1945,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants8/JacobiIterant9"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant10" type="Control" parent="fluid/computePressure/10JacobiIterants8"]
@@ -1963,10 +1962,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants8/JacobiIterant10"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="10JacobiIterants9" type="Control" parent="fluid/computePressure"]
@@ -1986,10 +1985,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants9/JacobiIterant"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant2" type="Control" parent="fluid/computePressure/10JacobiIterants9"]
@@ -2003,10 +2002,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants9/JacobiIterant2"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant3" type="Control" parent="fluid/computePressure/10JacobiIterants9"]
@@ -2020,10 +2019,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants9/JacobiIterant3"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant4" type="Control" parent="fluid/computePressure/10JacobiIterants9"]
@@ -2037,10 +2036,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants9/JacobiIterant4"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant5" type="Control" parent="fluid/computePressure/10JacobiIterants9"]
@@ -2054,10 +2053,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants9/JacobiIterant5"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant6" type="Control" parent="fluid/computePressure/10JacobiIterants9"]
@@ -2071,10 +2070,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants9/JacobiIterant6"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant7" type="Control" parent="fluid/computePressure/10JacobiIterants9"]
@@ -2088,10 +2087,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants9/JacobiIterant7"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant8" type="Control" parent="fluid/computePressure/10JacobiIterants9"]
@@ -2105,10 +2104,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants9/JacobiIterant8"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant9" type="Control" parent="fluid/computePressure/10JacobiIterants9"]
@@ -2122,10 +2121,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants9/JacobiIterant9"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant10" type="Control" parent="fluid/computePressure/10JacobiIterants9"]
@@ -2139,10 +2138,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants9/JacobiIterant10"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="10JacobiIterants10" type="Control" parent="fluid/computePressure"]
@@ -2162,10 +2161,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants10/JacobiIterant"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant2" type="Control" parent="fluid/computePressure/10JacobiIterants10"]
@@ -2179,10 +2178,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants10/JacobiIterant2"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant3" type="Control" parent="fluid/computePressure/10JacobiIterants10"]
@@ -2196,10 +2195,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants10/JacobiIterant3"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant4" type="Control" parent="fluid/computePressure/10JacobiIterants10"]
@@ -2213,10 +2212,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants10/JacobiIterant4"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant5" type="Control" parent="fluid/computePressure/10JacobiIterants10"]
@@ -2230,10 +2229,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants10/JacobiIterant5"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant6" type="Control" parent="fluid/computePressure/10JacobiIterants10"]
@@ -2247,10 +2246,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants10/JacobiIterant6"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant7" type="Control" parent="fluid/computePressure/10JacobiIterants10"]
@@ -2264,10 +2263,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants10/JacobiIterant7"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant8" type="Control" parent="fluid/computePressure/10JacobiIterants10"]
@@ -2281,10 +2280,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants10/JacobiIterant8"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant9" type="Control" parent="fluid/computePressure/10JacobiIterants10"]
@@ -2298,10 +2297,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants10/JacobiIterant9"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant10" type="Control" parent="fluid/computePressure/10JacobiIterants10"]
@@ -2315,10 +2314,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants10/JacobiIterant10"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="10JacobiIterants11" type="Control" parent="fluid/computePressure"]
@@ -2338,10 +2337,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants11/JacobiIterant"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant2" type="Control" parent="fluid/computePressure/10JacobiIterants11"]
@@ -2355,10 +2354,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants11/JacobiIterant2"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant3" type="Control" parent="fluid/computePressure/10JacobiIterants11"]
@@ -2372,10 +2371,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants11/JacobiIterant3"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant4" type="Control" parent="fluid/computePressure/10JacobiIterants11"]
@@ -2389,10 +2388,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants11/JacobiIterant4"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant5" type="Control" parent="fluid/computePressure/10JacobiIterants11"]
@@ -2406,10 +2405,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants11/JacobiIterant5"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant6" type="Control" parent="fluid/computePressure/10JacobiIterants11"]
@@ -2423,10 +2422,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants11/JacobiIterant6"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant7" type="Control" parent="fluid/computePressure/10JacobiIterants11"]
@@ -2440,10 +2439,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants11/JacobiIterant7"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant8" type="Control" parent="fluid/computePressure/10JacobiIterants11"]
@@ -2457,10 +2456,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants11/JacobiIterant8"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant9" type="Control" parent="fluid/computePressure/10JacobiIterants11"]
@@ -2474,10 +2473,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants11/JacobiIterant9"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant10" type="Control" parent="fluid/computePressure/10JacobiIterants11"]
@@ -2491,10 +2490,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants11/JacobiIterant10"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="10JacobiIterants12" type="Control" parent="fluid/computePressure"]
@@ -2514,10 +2513,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants12/JacobiIterant"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant2" type="Control" parent="fluid/computePressure/10JacobiIterants12"]
@@ -2531,10 +2530,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants12/JacobiIterant2"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant3" type="Control" parent="fluid/computePressure/10JacobiIterants12"]
@@ -2548,10 +2547,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants12/JacobiIterant3"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant4" type="Control" parent="fluid/computePressure/10JacobiIterants12"]
@@ -2565,10 +2564,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants12/JacobiIterant4"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant5" type="Control" parent="fluid/computePressure/10JacobiIterants12"]
@@ -2582,10 +2581,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants12/JacobiIterant5"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant6" type="Control" parent="fluid/computePressure/10JacobiIterants12"]
@@ -2599,10 +2598,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants12/JacobiIterant6"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant7" type="Control" parent="fluid/computePressure/10JacobiIterants12"]
@@ -2616,10 +2615,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants12/JacobiIterant7"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant8" type="Control" parent="fluid/computePressure/10JacobiIterants12"]
@@ -2633,10 +2632,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants12/JacobiIterant8"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant9" type="Control" parent="fluid/computePressure/10JacobiIterants12"]
@@ -2650,10 +2649,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants12/JacobiIterant9"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="JacobiIterant10" type="Control" parent="fluid/computePressure/10JacobiIterants12"]
@@ -2667,10 +2666,10 @@ size_flags_vertical = 2
 copy_mode = 2
 
 [node name="pressure" type="TextureRect" parent="fluid/computePressure/10JacobiIterants12/JacobiIterant10"]
-material = SubResource( 25 )
+material = SubResource( 59 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 26 )
+texture = SubResource( 60 )
 expand = true
 
 [node name="subtractPressureGradient" type="Viewport" parent="fluid"]
@@ -2681,10 +2680,10 @@ render_target_clear_mode = 2
 render_target_update_mode = 3
 
 [node name="subtractPressureGradient" type="TextureRect" parent="fluid/subtractPressureGradient"]
-material = SubResource( 30 )
+material = SubResource( 64 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 31 )
+texture = SubResource( 65 )
 expand = true
 
 [node name="Viewing" type="Viewport" parent="fluid"]
@@ -2695,10 +2694,10 @@ render_target_clear_mode = 2
 render_target_update_mode = 3
 
 [node name="Viewing" type="TextureRect" parent="fluid/Viewing"]
-material = SubResource( 35 )
+material = SubResource( 72 )
 anchor_right = 1.0
 anchor_bottom = 1.0
-texture = SubResource( 31 )
+texture = SubResource( 65 )
 expand = true
 
 [node name="GUI" type="Control" parent="."]
@@ -2728,5 +2727,16 @@ margin_right = 121.0
 margin_bottom = 20.0
 focus_mode = 2
 text = "Brush"
+align = 0
 switch_on_hover = true
 script = ExtResource( 7 )
+
+[node name="HSlider" type="HSlider" parent="GUI/VBoxContainer"]
+margin_left = 125.0
+margin_right = 275.0
+margin_bottom = 16.0
+rect_min_size = Vector2( 150, 16 )
+hint_tooltip = "Fluid complexity"
+script = ExtResource( 1 )
+
+[connection signal="value_changed" from="GUI/VBoxContainer/HSlider" to="GUI/VBoxContainer/HSlider" method="_on_HSlider_value_changed"]
