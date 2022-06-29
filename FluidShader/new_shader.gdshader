@@ -1,7 +1,4 @@
-[gd_resource type="Shader" format=2]
-
-[resource]
-code = "shader_type canvas_item;
+shader_type canvas_item;
 
 uniform sampler2D w; // Intermediate velocity (full of divergence)
 
@@ -31,4 +28,4 @@ void fragment(){
 	} else {
 		COLOR = vec4(vec2(divergence), 0.0, 1.0);
 	}
-}"
+}
