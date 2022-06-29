@@ -157,7 +157,7 @@ viewport_path = NodePath("fluid/Ink")
 [sub_resource type="ShaderMaterial" id=43]
 resource_local_to_scene = true
 shader = SubResource( 39 )
-shader_param/timestep = 0.416667
+shader_param/timestep = 1.04694
 shader_param/u = SubResource( 41 )
 shader_param/x = SubResource( 42 )
 shader_param/obstacles = SubResource( 40 )
@@ -232,7 +232,7 @@ viewport_path = NodePath("fluid/subtractPressureGradient")
 [sub_resource type="ShaderMaterial" id=53]
 resource_local_to_scene = true
 shader = ExtResource( 4 )
-shader_param/timestep = 0.416667
+shader_param/timestep = 1.04694
 shader_param/u = SubResource( 51 )
 shader_param/x = SubResource( 52 )
 shader_param/obstacles = SubResource( 50 )
@@ -328,7 +328,7 @@ void fragment(){
 	float y1 = texture(p, UV + vec2(0, 1) * SCREEN_PIXEL_SIZE).x;
 
 	// New velocity
-	vec2 pressureGradient = (vec2(x1, y1) - vec2(x0, y0)) * 0.5;
+	vec2 pressureGradient = (vec2(x1, y1) - vec2(x0, y0));
 	vec2 oldV = texture(w, UV).xy;
 	
 	// Check for obstacles
@@ -737,7 +737,6 @@ texture = SubResource( 60 )
 expand = true
 
 [node name="10JacobiIterants2" type="Control" parent="fluid/computePressure"]
-visible = false
 anchor_right = 1.0
 anchor_bottom = 1.0
 mouse_filter = 1
